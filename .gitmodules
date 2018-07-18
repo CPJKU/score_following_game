@@ -1,3 +1,0 @@
-[submodule "score_following_game/reinforcement_learning"]
-	path = score_following_game/reinforcement_learning
-	url = git@gitlab.cp.jku.at:florianh/reinforcement_learning.git
