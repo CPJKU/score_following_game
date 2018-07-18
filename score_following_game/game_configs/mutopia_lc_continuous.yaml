@@ -1,0 +1,17 @@
+# data generation parameters
+spec_context: 40
+sheet_context: 512
+staff_height: 140
+spectrogram_params: {'sample_rate': 22050, 'frame_size': 2048, 'fps': 20}
+spec_factor: 0.5
+sheet_factor: 0.5
+
+# network parameters
+spec_shape: [2, 39, 20]
+sheet_shape: [2, 70, 256]
+
+# game parameters (environment)
+target_frame: right_most
+continuous: True
+actions: []
+reward_window: -1
