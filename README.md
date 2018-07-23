@@ -65,10 +65,8 @@ conda env create -f environment.yml
 ```
 
 Next, clone the project from github.
-The flag *--recurse-submodules* is important as it will also clone our reinforcment learning project
-as a submodule.
 ```
-git clone --recurse-submodules git@github.com:CPJKU/score_following_game.git
+git clone git@github.com:CPJKU/score_following_game.git
 ```
 
 To install the *score_following_game* package in develop mode run
