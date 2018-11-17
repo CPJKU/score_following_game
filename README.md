@@ -125,7 +125,7 @@ If automatically downloading and preparing the data fails for any reason
 just download it manually from [here](http://drive.jku.at/ssf/s/readFile/share/5691/-1682982240985647822/publicLink/score_following_game_data.tar.gz)
 and extract it to your desired data path <PATH-TO-DATA-ROOT>.
 
-**Note: For simplicity we only use one soundfont for synthesizing the audios in this repository. This might lead to slightly different results than reported in the corresponding paper.**
+Note: For simplicity we only use one soundfont for synthesizing the audios in this repository.
 
 ## Training an Agent
 To train a model on a specific data set, learning algorithm and network architecture
