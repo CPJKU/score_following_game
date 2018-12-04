@@ -183,7 +183,7 @@ If everything works out fine this is what you should see
 To compute the performance measures over the entire training, validation or test set
 you can run the following command.
 ```
-python --trials 1 eval_score_following.py --params <LOG-ROOT>/params_ISMIR18/<run_id>/best_model.pt --data_set <PATH-TO-DATA-ROOT/score_following_game_data/nottingham/nottingham_test
+python eval_score_following.py --trials 1 --params <LOG-ROOT>/params_ISMIR18/<run_id>/best_model.pt --data_set <PATH-TO-DATA-ROOT/score_following_game_data/nottingham/nottingham_test
 ```
 This should produce something like this, reporting the ratio of correctly tracked onsets for each test piece:
 ```
@@ -196,3 +196,42 @@ jigs_simple_chords_29                                        tracking ratio: 1.0
 Recall that the agent's are following a stochastic policy.
 So we recommend to increase the number of evaluation trials (for example to 10 as in our paper)
 to get more robust estimates.
+
+
+## Trying out a Pre-trained Agent
+If you would like to try out a pre-trained agent here is a recipe how can do it:
+We assume here that the data is already set up as explained above.
+
+- download the pre-trained parameters from [here](http://drive.jku.at/ssf/s/readFile/share/7332/-5392177897987956018/publicLink/pretrained_model_ScoreFollowingNetMSMDLCHSDeepDoLight.pt).
+- run the command below.
+- optional: change the number of evaluation trails in the command below to 1 for a quick check. Run the full 10 evaluations to see how stable the model is.
+
+```
+python eval_score_following.py --trials 10 --params <PATH-TO-PRETRAINEDMODEL>.pt --data_set <PATH-TO-DATA-ROOT>/score_following_game_data/msmd_all/msmd_all_test --game_config game_configs/mutopia_lchs1.yaml --net ScoreFollowingNetMSMDLCHSDeepDoLight
+```
+
+What you should get as an output is the following:
+```
+& 0.75 & 0.74 & 19.32 & 23.45 \\
+& 0.73 & 0.73 & 18.89 & 23.17 \\
+& 0.74 & 0.75 & 19.27 & 23.62 \\
+& 0.77 & 0.77 & 18.86 & 22.67 \\
+& 0.77 & 0.76 & 19.27 & 23.46 \\
+& 0.75 & 0.76 & 19.88 & 24.79 \\
+& 0.77 & 0.74 & 19.06 & 22.64 \\
+& 0.76 & 0.77 & 18.73 & 22.63 \\
+& 0.76 & 0.73 & 19.56 & 24.25 \\
+& 0.75 & 0.75 & 19.21 & 23.43 \\
+--------------------------------
+& 0.76 & 0.75 & 19.21 & 23.41 \\
+```
+The last row is the average over all 10 evaluation trials.
+
+If you want to see how the pre-trained model performs on a single piece run the following command (this will show a video and requires a graphical output):
+
+```
+python test_score_following.py --params <PATH-TO-PRETRAINEDMODEL>.pt --data_set <PATH-TO-DATA-ROOT>/score_following_game_data/msmd_all/msmd_all_test --game_config game_configs/mutopia_lchs1.yaml --net ScoreFollowingNetMSMDLCHSDeepDoLight --piece BachJS__BWV117a__BWV-117a
+```
+
+**Note:** This is one of the pieces where the model fails from time to time.
+We selected this example to show the stochastic behaviour of a Policy Gradient Agent.
