@@ -5,7 +5,7 @@ import os
 import sys
 import tarfile
 
-FILE_PATH = "http://drive.jku.at/ssf/s/readFile/share/5691/-1682982240985647822/publicLink/score_following_game_data.tar.gz"
+FILE_PATH = "http://www.cp.jku.at/people/dorfer/share/score_following_game_data.tar.gz"
 
 
 def download_file(source, destination):

@@ -122,7 +122,7 @@ which will automatically download and prepare the data set for you.
 python prepare_game_data.py --destination <PATH-TO-DATA-ROOT>
 ```
 If automatically downloading and preparing the data fails for any reason
-just download it manually from [here](http://drive.jku.at/ssf/s/readFile/share/5691/-1682982240985647822/publicLink/score_following_game_data.tar.gz)
+just download it manually from [here](http://www.cp.jku.at/people/dorfer/share/score_following_game_data.tar.gz)
 and extract it to your desired data path <PATH-TO-DATA-ROOT>.
 
 Note: For simplicity we only use one soundfont for synthesizing the audios in this repository.
@@ -202,7 +202,7 @@ to get more robust estimates.
 If you would like to try out a pre-trained agent here is a recipe how can do it:
 We assume here that the data is already set up as explained above.
 
-- download the pre-trained parameters from [here](http://drive.jku.at/ssf/s/readFile/share/7332/-5392177897987956018/publicLink/pretrained_model_ScoreFollowingNetMSMDLCHSDeepDoLight.pt).
+- download the pre-trained parameters from [here](http://www.cp.jku.at/people/dorfer/share/pretrained_model_ScoreFollowingNetMSMDLCHSDeepDoLight.pt).
 - run the command below.
 - optional: change the number of evaluation trails in the command below to 1 for a quick check. Run the full 10 evaluations to see how stable the model is.
 
