@@ -21,9 +21,7 @@ def prepare_grad_for_render(gradient, resize_shape, norm, cmap):
 
 
 class IntegratedGradients:
-    """
-       Produces gradients generated with guided back propagation from the given image
-    """
+
     def __init__(self, model, device, steps=100):
         self.model = model
         self.gradients = None

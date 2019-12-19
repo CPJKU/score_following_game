@@ -1,7 +1,13 @@
-# Learning to Listen, Read, and Follow:<br>Score Following as a Reinforcement Learning Game
+# Score Following as a Multi-Modal Reinforcement Learning Problem
 
-This repository contains the corresponding code for our paper:
+This repository contains the corresponding code for our article:
+>[Henkel F.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/florian-henkel/), 
+>[Balke S.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/stefan-balke/),
+>[Dorfer M.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/matthias-dorfer/), and [Widmer G.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/gerhard-widmer/)<br>
+"[Score Following as a Multi-Modal Reinforcement Learning Problem](http://doi.org/10.5334/tismir.31)".<br>
+*Transactions of the International Society for Music Information Retrieval*, 2019
 
+which is an invited extension of the work presented in:
 >[Dorfer M.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/matthias-dorfer/), [Henkel F.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/florian-henkel/), and [Widmer G.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/gerhard-widmer/)<br>
 "[Learning to Listen, Read, and Follow: Score Following as a Reinforcement Learning Game](https://arxiv.org/pdf/1807.06391.pdf)".<br>
 *In Proceedings of the 19th International Society for Music Information Retrieval Conference*, 2018
@@ -51,31 +57,42 @@ Before we can start working with the score following game,
 we first need to set up a few things:
 
 ### Setup and Requirements
-For a list of required python packages see the *requirements.txt*
-or just install them all at once using pip.
+First, clone the project from github.
 ```
-pip install -r requirements.txt
+git clone git@github.com:CPJKU/score_following_game.git
 ```
 
-If your are an anaconda user,
-we also provide an [anaconda environment file](https://conda.io/docs/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file)
+Navigate to the directory
+```
+cd score_following_game
+```
+
+As a next step you need to install the required packages. If your are an anaconda user,
+we  provide an [anaconda environment file](https://conda.io/docs/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file)
 which can be installed as follows:
 ```
 conda env create -f environment.yml
 ```
 
-Next, clone the project from github.
+In case you prefer to not use conda, we also provide you with a *requirements.txt* file that can be installed by
 ```
-git clone git@github.com:CPJKU/score_following_game.git
+pip install -r requirements.txt
 ```
 
-To install the *score_following_game* package in develop mode run
+Activate your conda environment:
+```
+source activate score_following
+```
+
+and install the *score_following_game* package in develop mode:
 ```
 python setup.py develop --user
 ```
-in the root folder of the package.
 
 This is what we recommend, especially if you want to try out new ideas.
+
+Finally, you will also need the [*Baselines*](https://github.com/openai/baselines) package by OpenAI.
+Please follow their instructions and install the package within your environment.
 
 ### Software Synthesizer - FluidSynth
 Make sure that you have [fluidsynth](http://www.fluidsynth.org/) available on your system.
@@ -89,19 +106,19 @@ everything should be ready to train the models.
 To check if the game works properly on your system you can run the following script and
 play the game on your own.
 ```
-python environment_test.py --data_set test_sample --agent_type human --game_config game_configs/nottingham.yaml
+python test_agent.py --data_set ./data/test_sample --piece Anonymous__lesgraces__lesgraces --game_config game_configs/mutopia_lchs1.yaml --agent_type human 
 ```
-With the key "w" you can increase the agents pixel progression speed,
-with "s" you can decrease it.
+With the key "right" you can increase the agents pixel progression speed,
+with "left" you can decrease it.
 Remember, the goal is to collect as much reward as possible.
 
 **Important**: If you are a MAC user you have to add your terminal application (e.g. iTerm)
 to the list of accessibility input devices (system control -> security & privacy -> accessibility).
 
 If you don't want to play on your own,
-you can also run an optimal agent.
+you can also run an optimal agent. (This will create a video in the folder *videos*.)
 ```
-python environment_test.py --data_set test_sample --agent_type optimal --game_config game_configs/nottingham_continuous.yaml
+python test_agent.py --data_set ./data/test_sample --piece Anonymous__lesgraces__lesgraces --game_config game_configs/mutopia_lchs1.yaml --agent_type optimal 
 ```
 
 **Important**: This wont work on a server without a x-window system
@@ -122,7 +139,7 @@ which will automatically download and prepare the data set for you.
 python prepare_game_data.py --destination <PATH-TO-DATA-ROOT>
 ```
 If automatically downloading and preparing the data fails for any reason
-just download it manually from [here](http://www.cp.jku.at/people/dorfer/share/score_following_game_data.tar.gz)
+just download it manually from [here](http://www.cp.jku.at/resources/2019_RLScoFo_TISMIR/data.tar.gz)
 and extract it to your desired data path <PATH-TO-DATA-ROOT>.
 
 Note: For simplicity we only use one soundfont for synthesizing the audios in this repository.
@@ -131,30 +148,30 @@ Note: For simplicity we only use one soundfont for synthesizing the audios in th
 To train a model on a specific data set, learning algorithm and network architecture
 you can start with our suggested commands below.
 
-**Note**: Our *sf_experiment.py* training script has a very verbose command line
+**Note**: Our *experiment.py* training script has a very verbose command line
 and we rely on the default parametrization for the following exemplar calls.
 If you want to try different agent configurations please run
 ```
-python sf_experiment.py --help
+python experiment.py --help
 ```
 to learn more.
 
-### Train A2C Agent on Nottingham (monophonic):
+### Train PPO Agent on Nottingham (monophonic):
 ```
-python sf_experiment.py --net ScoreFollowingNet --train_set <PATH-TO-DATA-ROOT>/score_following_game_data/nottingham/nottingham_train --eval_set <PATH-TO-DATA-ROOT>/score_following_game_data/nottingham/nottingham_valid --game_config game_configs/nottingham.yaml --log_root <LOG-ROOT>/runs_ISMIR18 --param_root <LOG-ROOT>/params_ISMIR18
-```
-
-### Train A2C Agent on MSMD (polyphonic):
-```
-python sf_experiment.py --net ScoreFollowingNetMSMDLCHSDeepDo --train_set <PATH-TO-DATA-ROOT>/score_following_game_data/msmd_all/msmd_all_train --eval_set <PATH-TO-DATA-ROOT>/score_following_game_data/msmd_all/msmd_all_valid --game_config game_configs/mutopia_lchs1.yaml --log_root <LOG-ROOT>/runs_ISMIR18 --param_root <LOG-ROOT>/params_ISMIR18
+python experiment.py --net ScoreFollowingNetNottinghamLS --train_set <PATH-TO-DATA-ROOT>/nottingham/nottingham_train --eval_set <PATH-TO-DATA-ROOT>/nottingham/nottingham_valid --game_config game_configs/nottingham_ls1.yaml --log_root <LOG-ROOT> --param_root <PARAM-ROOT> --agent ppo
 ```
 
-### Logging with [TensorboardX](https://github.com/lanpa/tensorboard-pytorch)
+### Train PPO Agent on MSMD (polyphonic):
+```
+python experiment.py --net ScoreFollowingNetMSMDLCHSDeepDoLight --train_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_train --eval_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_valid --game_config game_configs/mutopia_lchs1.yaml --log_root <LOG-ROOT> --param_root <PARAM-ROOT> --agent ppo
+```
 
-We use a tensorboard port for pytorch to watch our training progress.
+### Logging with [Tensorboard](https://github.com/tensorflow/tensorboard)
+
+We use tensorboard to watch our training progress.
 If you have all packages installed you can start it with:
 ```
-tensorboard --logdir <LOG-ROOT>/runs_ISMIR18
+tensorboard --logdir <LOG-ROOT>
 ```
 
 Once tensorboard is running you should be able to view it in your browser at *http://localhost:6006*.
@@ -169,11 +186,10 @@ To get an intuition on how well your agents work
 you can visualize its performance on a particular piece.
 Just run the following command and you will get a rendering
 similar to the one provided in the youtube video above.
+
 ```
-python test_score_following.py --params <LOG-ROOT>/params_ISMIR18/<run_id>/best_model.pt --data_set <PATH-TO-DATA-ROOT/score_following_game_data/nottingham/nottingham_test
+python test_agent.py --params <PARAM-ROOT>/<run_id>/best_model.pt --data_set <PATH-TO-DATA-ROOT/nottingham/nottingham_test --piece <PIECE-NAME> --game_config game_configs/nottingham_ls1.yaml --agent_type rl 
 ```
-Without specifying a specific piece using the parameter *--piece <PIECE-NAME>*
-a random piece is selected from the provided split folder.
 
 If everything works out fine this is what you should see
 (for an explanation of the components please see the youtube video above):
@@ -183,7 +199,7 @@ If everything works out fine this is what you should see
 To compute the performance measures over the entire training, validation or test set
 you can run the following command.
 ```
-python eval_score_following.py --trials 1 --params <LOG-ROOT>/params_ISMIR18/<run_id>/best_model.pt --data_set <PATH-TO-DATA-ROOT/score_following_game_data/nottingham/nottingham_test
+python evaluate_agent.py --trials 1 --params <PARAM-ROOT>/<run_id>/best_model.pt --data_set <PATH-TO-DATA-ROOT/nottingham/nottingham_test
 ```
 This should produce something like this, reporting the ratio of correctly tracked onsets for each test piece:
 ```
@@ -202,36 +218,34 @@ to get more robust estimates.
 If you would like to try out a pre-trained agent here is a recipe how can do it:
 We assume here that the data is already set up as explained above.
 
-- download the pre-trained parameters from [here](http://www.cp.jku.at/people/dorfer/share/pretrained_model_ScoreFollowingNetMSMDLCHSDeepDoLight.pt).
+- we provide you with the pre-trained models in the folder *models*.
 - run the command below.
 - optional: change the number of evaluation trails in the command below to 1 for a quick check. Run the full 10 evaluations to see how stable the model is.
 
 ```
-python eval_score_following.py --trials 10 --params <PATH-TO-PRETRAINEDMODEL>.pt --data_set <PATH-TO-DATA-ROOT>/score_following_game_data/msmd_all/msmd_all_test --game_config game_configs/mutopia_lchs1.yaml --net ScoreFollowingNetMSMDLCHSDeepDoLight
+python evaluate_agent --trials 10 --params ./models/<PATH-TO-PRETRAINEDMODEL>/best_model.pt --data_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_test
 ```
-
-What you should get as an output is the following:
+**Note**: If you keep the folder name as we provide it, the network and configuration file will be automatically derived. 
+For our best PPO agent you should get a similar output as the following (differences are due to the stochastic behavior of the RL agent):
 ```
-& 0.75 & 0.74 & 19.32 & 23.45 \\
-& 0.73 & 0.73 & 18.89 & 23.17 \\
-& 0.74 & 0.75 & 19.27 & 23.62 \\
-& 0.77 & 0.77 & 18.86 & 22.67 \\
-& 0.77 & 0.76 & 19.27 & 23.46 \\
-& 0.75 & 0.76 & 19.88 & 24.79 \\
-& 0.77 & 0.74 & 19.06 & 22.64 \\
-& 0.76 & 0.77 & 18.73 & 22.63 \\
-& 0.76 & 0.73 & 19.56 & 24.25 \\
-& 0.75 & 0.75 & 19.21 & 23.43 \\
---------------------------------
-& 0.76 & 0.75 & 19.21 & 23.41 \\
+& 0.82 & 0.82 & 0.67 & 0.85 \\
+& 0.80 & 0.77 & 0.65 & 0.80 \\
+& 0.81 & 0.80 & 0.66 & 0.81 \\
+& 0.80 & 0.81 & 0.65 & 0.79 \\
+& 0.79 & 0.80 & 0.65 & 0.81 \\
+& 0.84 & 0.78 & 0.63 & 0.79 \\
+& 0.79 & 0.80 & 0.67 & 0.85 \\
+& 0.81 & 0.78 & 0.67 & 0.83 \\
+& 0.84 & 0.82 & 0.66 & 0.80 \\
+& 0.78 & 0.78 & 0.63 & 0.79 \\
+--------------------------------------------------
+& 0.81 & 0.80 & 0.65 & 0.81 \\
 ```
 The last row is the average over all 10 evaluation trials.
 
-If you want to see how the pre-trained model performs on a single piece run the following command (this will show a video and requires a graphical output):
+If you want to see how the pre-trained model performs on a single piece run the following command (this will create a video in the *videos* folder):
 
 ```
-python test_score_following.py --params <PATH-TO-PRETRAINEDMODEL>.pt --data_set <PATH-TO-DATA-ROOT>/score_following_game_data/msmd_all/msmd_all_test --game_config game_configs/mutopia_lchs1.yaml --net ScoreFollowingNetMSMDLCHSDeepDoLight --piece BachJS__BWV117a__BWV-117a
+python test_agent.py --params ./models/<PATH-TO-PRETRAINEDMODEL>/best_model.pt --data_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_test --piece BachJS__BWV117a__BWV-117a --agent_type rl
 ```
 
-**Note:** This is one of the pieces where the model fails from time to time.
-We selected this example to show the stochastic behaviour of a Policy Gradient Agent.
