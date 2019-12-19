@@ -19,7 +19,7 @@ sheet_shape: [2, 80, 256]
 
 # game parameters (environment)
 target_frame: right_most
-actions: [-1.0, 0, 1.0]
+actions: []
 reward_name: 'triangle_reward'
 reward_params: {'only_on_onset': False}
 
