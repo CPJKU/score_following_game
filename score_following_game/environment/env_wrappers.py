@@ -1,207 +1,128 @@
 import cv2
 import gym
+
 import numpy as np
-from gym import spaces
 
 
-class ConvertToFloat(gym.ObservationWrapper):
+class ConvertToFloatWrapper(gym.ObservationWrapper):
 
-    def __init__(self, env):
+    def __init__(self, env, key):
         """
-        Invert color of sheet image
+        Convert image observation (determined by key) to float and scale it to range (0, 1)
         """
         gym.ObservationWrapper.__init__(self, env)
+        self.key = key
+
+    def observation(self, observation):
+
+        observation[self.key] = observation[self.key].astype(np.float32)/255.
+
+        return observation
+
+
+class InvertWrapper(gym.ObservationWrapper):
+
+    def __init__(self, env, key):
+        """
+        Invert color of an image that is already in range (0, 1)
+        """
+        gym.ObservationWrapper.__init__(self, env)
+        self.key = key
 
     def observation(self, observation):
 
         # unfold observation vector
-        spectrogram, sheet_img = observation
-        sheet_img = sheet_img.astype(np.float32)
-        sheet_img /= 255.0
-        return spectrogram, sheet_img
+        observation[self.key] = 1.0 - observation[self.key]
+
+        return observation
 
 
-class InvertSheet(gym.ObservationWrapper):
-
-    def __init__(self, env):
+class DifferenceWrapper(gym.ObservationWrapper):
+    def __init__(self, env, key, keep_raw=True):
         """
-        Invert color of sheet image
+        Returns original and delta observation if keep_raw=True else only the delta observation
         """
         gym.ObservationWrapper.__init__(self, env)
-
-    def observation(self, observation):
-
-        # unfold observation vector
-        spectrogram, sheet_img = observation
-        sheet_img = 1.0 - sheet_img
-        return spectrogram, sheet_img
-
-
-class PrepareForNet(gym.ObservationWrapper):
-
-    def __init__(self, env):
-        """
-        Prepare observations for neural networks
-        """
-        gym.ObservationWrapper.__init__(self, env)
-
-    def observation(self, observation):
-
-        # unfold observation vector
-        spectrogram, sheet_img = observation
-
-        while spectrogram.ndim < 4:
-            spectrogram = spectrogram[np.newaxis]
-
-        while sheet_img.ndim < 4:
-            sheet_img = sheet_img[np.newaxis]
-
-        return spectrogram, sheet_img
-
-
-class SpecDifference(gym.ObservationWrapper):
-
-    def __init__(self, env, keep_raw=True):
-        """
-        Returns original and delta spectrogram
-        """
-        gym.ObservationWrapper.__init__(self, env)
-        self.prev_spec = None
+        self.prev = None
         self.keep_raw = keep_raw
+        self.key = key
 
-        # spec_shape = list(self.observation_space.spaces['spec'].shape)
-        spec_space, sheet_space = self.observation_space.spaces
-        spec_shape = list(spec_space.shape)
+        space = self.observation_space.spaces[self.key]
+        shape = list(space.shape)
 
         # adapt the observation space
-        spec_shape[0] = 2 if self.keep_raw else 1
+        if self.keep_raw:
+            shape[0] = shape[0]*2
 
-        # IMPORTANT keep ordering first spec then sheet
-        self.observation_space = spaces.Tuple((spaces.Box(0, 255, spec_shape, dtype=np.float32), sheet_space))
-        # self.observation_space = spaces.Dict({"spec": spaces.Box(0, 255, spec_shape),
-        #                                       "sheet": self.observation_space.spaces['sheet']})
+        self.observation_space.spaces[self.key] = gym.spaces.Box(0, 255, shape, dtype=np.float32)
 
     def observation(self, observation):
 
-        # unfold observation vector
-        spectrogram, sheet_img = observation
+        act = observation[self.key]
 
-        if self.prev_spec is None:
-            self.prev_spec = spectrogram
+        if self.prev is None:
+            self.prev = act
 
-        spectrogram_diff = spectrogram - self.prev_spec
-        self.prev_spec = spectrogram
+        act_diff = act - self.prev
+        self.prev = act
 
         if self.keep_raw:
-            spectrogram_diff = np.vstack((spectrogram, spectrogram_diff))
+            act_diff = np.vstack((act, act_diff))
 
-        return spectrogram_diff, sheet_img
+        observation[self.key] = act_diff
+
+        return observation
 
 
-class SheetDifference(gym.ObservationWrapper):
+class ResizeSizeWrapper(gym.ObservationWrapper):
 
-    def __init__(self, env, keep_raw=True):
+    def __init__(self, env, key, factor, dim):
         """
-        Returns original and delta sheet image
-        """
-        gym.ObservationWrapper.__init__(self, env)
-        self.prev_sheet = None
-        self.keep_raw = keep_raw
-
-        # adapt the observation space
-        # sheet_shape = list(self.observation_space.spaces['sheet'].shape)
-        spec_space, sheet_space = self.observation_space.spaces
-        sheet_shape = list(sheet_space.shape)
-
-        # adapt the observation space
-        sheet_shape[0] = 2 if self.keep_raw else 1
-        # self.observation_space = spaces.Dict({"spec": self.observation_space.spaces['spec'],
-        #                                       "sheet": spaces.Box(0, 255, sheet_shape)})
-
-        # IMPORTANT keep ordering first spec then sheet
-        self.observation_space = spaces.Tuple((spec_space, spaces.Box(0, 255, sheet_shape, dtype=np.float32)))
-
-    def observation(self, observation):
-
-        # unfold observation vector
-        spectrogram, sheet_img = observation
-
-        if self.prev_sheet is None:
-            self.prev_sheet = sheet_img
-
-        sheet_diff = sheet_img - self.prev_sheet
-        self.prev_sheet = sheet_img
-
-        if self.keep_raw:
-            sheet_diff = np.vstack((sheet_img, sheet_diff))
-
-        return spectrogram, sheet_diff
-
-
-class ResizeSizeObservations(gym.ObservationWrapper):
-
-    def __init__(self, env, spec_factor=1.0, sheet_factor=1.0):
-        """
-        Scale size of observations (sheet, spec) by certain factor
+        Scale size of observation image (sheet, spec) by certain factor
         """
         gym.ObservationWrapper.__init__(self, env)
-        self.spec_factor = spec_factor
-        self.sheet_factor = sheet_factor
 
-        # sheet_shape = list(self.observation_space.spaces['sheet'].shape)
-        # spec_shape = list(self.observation_space.spaces['spec'].shape)
-
-        spec_space, sheet_space = self.observation_space.spaces
-        sheet_shape = list(sheet_space.shape)
-        spec_shape = list(spec_space.shape)
-
-        sheet_shape[1] *= sheet_factor
-        sheet_shape[2] *= sheet_factor
-
-        spec_shape[1] *= spec_factor
-        spec_shape[2] *= spec_factor
-
-        spec_shape = np.asarray(spec_shape, dtype=np.int)
-        sheet_shape = np.asarray(sheet_shape, dtype=np.int)
-
-        # IMPORTANT keep ordering first insert spec then sheet
-        # self.observation_space = spaces.Dict({"spec": spaces.Box(0, 255, spec_shape),
-        #                                       "sheet": spaces.Box(0, 255, sheet_shape)})
-
-        # IMPORTANT keep ordering first spec then sheet
-        self.observation_space = spaces.Tuple((spaces.Box(0, 255, spec_shape, dtype=np.float32),
-                                               spaces.Box(0, 255, sheet_shape, dtype=np.float32)))
-
-    def observation(self, observation):
-
-        # unfold observation vector
-        spectrogram, sheet_img = observation
-
-        # resize spectrogram
-        if self.spec_factor != 1.0:
-            s = spectrogram.shape
-            s = [int(d * self.spec_factor) for d in s[1:]]
-            spectrogram = cv2.resize(spectrogram.transpose(1,2,0), (s[1], s[0]))
-            spectrogram = np.expand_dims(spectrogram, 0)
-
-        # resize sheet image
-        if self.sheet_factor != 1.0:
-            s = sheet_img.shape
-            s = [int(d * self.sheet_factor) for d in s[1:]]
-            sheet_img = cv2.resize(sheet_img.transpose(1, 2, 0), (s[1], s[0]))
-            sheet_img = np.expand_dims(sheet_img, 0)
-
-        return spectrogram, sheet_img
-
-
-class ScaleRewardEnv(gym.RewardWrapper):
-
-    def __init__(self, env, factor):
-        """
-        Scale reward to smaller range (should help learning)
-        """
-        gym.RewardWrapper.__init__(self, env)
+        self.key = key
         self.factor = factor
+        self.dim = dim
 
-    def reward(self, reward):
-        return reward * self.factor
+        space = self.observation_space.spaces[self.key]
+        shape = list(space.shape)
+
+        for d in dim:
+            shape[d] *= self.factor
+
+        shape = np.asarray(shape, dtype=np.int)
+
+        self.observation_space.spaces[self.key] = gym.spaces.Box(0, 255, shape, dtype=np.float32)
+
+    def observation(self, observation):
+
+        # get observation vector
+        ob = observation[self.key]
+
+        # resize observation if factor is not 1
+        if self.factor != 1.0:
+            s = list(ob.shape)
+            for d in self.dim:
+                s[d] = int(s[d]*self.factor)
+
+            ob = cv2.resize(ob.transpose(1, 2, 0), (s[2], s[1]))
+
+            ob = np.expand_dims(ob, 0)
+            observation[self.key] = ob
+
+        return observation
+
+
+class TanhActionWrapper(gym.ActionWrapper):
+
+    def __init__(self, env):
+        gym.ActionWrapper.__init__(self, env)
+
+    def action(self, action):
+        return action*128
+
+    def reverse_action(self, action):
+
+        return action/128

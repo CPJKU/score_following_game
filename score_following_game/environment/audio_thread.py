@@ -1,5 +1,5 @@
-
 import threading
+
 import numpy as np
 
 
@@ -63,4 +63,3 @@ class AudioThread(threading.Thread):
 
     def still_playing(self):
         return self.stream.is_active()
-

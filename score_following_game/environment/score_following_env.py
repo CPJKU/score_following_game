@@ -1,24 +1,29 @@
 
+import cv2
 import logging
-import matplotlib.pyplot as plt
-import numpy as np
 import time
 
-import cv2
-from gym import Env
-from gym import spaces
+import numpy as np
+
+from gym import Env, spaces
 from gym.utils import seeding
-
 from score_following_game.environment.audio_thread import AudioThread
-
+from score_following_game.environment.render_utils import write_text, prepare_sheet_for_render, prepare_spec_for_render
+from score_following_game.environment.reward import Reward
 
 logger = logging.getLogger(__name__)
 
+AGENT_COLOR = (0, 102, 204)
+TARGET_COLOR = (255, 0, 0)
+TEXT_COLOR = (255, 255, 255)
+BORDER_COLOR = (0, 0, 255)
+
 
 class ScoreFollowingEnv(Env):
-
     metadata = {
-        'render.modes': {'human': 'human', 'computer': 'computer'},
+        'render.modes': {'human': 'human',
+                         'computer': 'computer',
+                         'video': 'video'},
     }
 
     def __init__(self, rl_pool, config, render_mode=None):
@@ -26,15 +31,16 @@ class ScoreFollowingEnv(Env):
         self.rl_pool = rl_pool
         self.actions = config["actions"]
         self.render_mode = render_mode
-        self.continuous = config["continuous"]
-        self.reward_window = config["reward_window"]
 
         # distance of tracker to true score position to fail the episode
-        self.score_dist_threshold = self.rl_pool.sheet_context // 3
+        self.score_dist_threshold = self.rl_pool.score_shape[2] // 3
 
         self.interpolationFunction = None
         self.spectrogram_positions = []
         self.interpolated_coords = []
+        self.spec_representation = config['spec_representation']
+
+        self.text_position = 0
 
         # path to the audio file (for playing the audio in the background)
         self.path_to_audio = ""
@@ -42,8 +48,8 @@ class ScoreFollowingEnv(Env):
         # flag that determines if the environment is executed for the first time or n
         self.first_execution = True
 
-        self.spectrogram = None
-        self.sheet_img = None
+        self.performance = None
+        self.score = None
 
         self._seed()
         self.viewer = None
@@ -58,99 +64,86 @@ class ScoreFollowingEnv(Env):
         self.time_stamp = time.time()
         self.step_times = np.zeros(25)
 
+        self.last_action = None
+
         # setup observation space
-        sheet_shape = (1, self.rl_pool.staff_height, self.rl_pool.sheet_context)
-        spec_shape = (1, self.rl_pool.frequency_bins, self.rl_pool.spec_context)
+        self.observation_space = spaces.Dict({'perf': spaces.Box(0, 255, self.rl_pool.perf_shape, dtype=np.float32),
+                                              'score': spaces.Box(0, 255, self.rl_pool.score_shape, dtype=np.float32)})
 
-        # IMPORTANT keep ordering first insert spec then sheet
-        self.observation_space = spaces.Tuple((spaces.Box(0, 255, spec_shape, dtype=np.float32),
-                                               spaces.Box(0, 255, sheet_shape, dtype=np.float32)))
-
-        # Another posibility would be to use a dictionary but this would remove the ordering
-        # self.observation_space = spaces.Dict({"spec": spaces.Box(0, 255, spec_shape),
-        #                                       "sheet": spaces.Box(0, 255, sheet_shape)})
-
-        if self.continuous:
-            # self.action_space = spaces.Box(-np.infty, np.infty, shape=(1,), dtype=np.float32)
-            self.action_space = spaces.Discrete(1)
+        if len(config['actions']) == 0:
+            self.action_space = spaces.Box(low=-128, high=128, shape=(1,), dtype=np.float32)
         else:
             self.action_space = spaces.Discrete(len(self.actions))
-
-        self.reward_range = (0, 1)
-
+        self.reward_range = (-1, 1)
         self.obs_image = None
+        self.prev_reward = 0.0
+        self.debug_info = {'song_history': self.rl_pool.get_song_history()}
+
+        self.reward = Reward(config['reward_name'], threshold=self.score_dist_threshold, pool=self.rl_pool,
+                             params=config['reward_params'])
+
+        # resize factors for rendering
+        self.resz_spec = 4
+        self.resz_imag = float(self.resz_spec) / 2 * float(self.rl_pool.perf_shape[1]) / self.rl_pool.score_shape[1]
+        self.resz_x, self.resz_y = self.resz_imag, self.resz_imag
+        self.text_position = 0
 
     def step(self, action):
 
-        if self.continuous:
-            # clip continuous action between -1000 and 1000 TODO
-            # print(action)
-            # if np.isnan(action):
-            #     action = 1000
-            # speed_update = min(max(-1000, action),1000)
-
-            # action is passed as array to stick to OpenAI continuous environment conventions
-            speed_update = action[0]
-            # speed_update = action
+        if len(self.actions) > 0:
+            # assert self.action_space.contains(action), "%r (%s) invalid" % (action, type(action))
+            # decode action if specific action space is given
+            action = self.actions[action]
         else:
-            assert self.action_space.contains(action), "%r (%s) invalid" % (action, type(action))
-            speed_update = self.actions[action]
+            action = action[0]
 
-        self.rl_pool.update_sheet_speed(speed_update)
+        self.rl_pool.update_position(action)
+
+        self.last_action = action
 
         # get current frame from "pace-maker"
-        if self.render_mode:
+        if self.render_mode == 'computer' or self.render_mode == 'human':
             self.curr_frame = self.audioThread.get_current_spec_position()
+
             while self.prev_frame == self.curr_frame:
                 self.render(mode=self.render_mode)
                 self.curr_frame = self.audioThread.get_current_spec_position()
+
             self.prev_frame = self.curr_frame
+
+        elif self.render_mode == 'video':
+            self.render(mode=self.render_mode)
+            self.curr_frame += 1
 
         else:
             self.curr_frame += 1
 
-        self.rl_pool.step(self.curr_frame)
-        self.spectrogram, self.sheet_img = self.rl_pool.observe()
+        self.performance, self.score = self.rl_pool.step(self.curr_frame)
 
-        self.spectrogram = np.expand_dims(self.spectrogram, 0)
-        self.sheet_img = np.expand_dims(self.sheet_img, 0)
-
-        self.state = self.spectrogram, self.sheet_img
+        self.state = dict(
+            perf=self.performance,
+            score=self.score
+        )
 
         # check if score follower lost its target
-        abs_err = int(np.abs(self.rl_pool.tracking_error()))
+        abs_err = np.abs(self.rl_pool.tracking_error())
         target_lost = abs_err > self.score_dist_threshold
 
         # check if score follower reached end of song
         end_of_song = self.rl_pool.last_onset_reached()
 
-        # compute reward
-        if self.reward_window < 0:
-            # reward independent of the onset
-            reward = float(self.score_dist_threshold) - abs_err
-            reward /= self.score_dist_threshold
-
-        else:
-            # calculate a reward > 0 only if we are inside a given window around an onset
-            reward = 0.0
-            if self.rl_pool.in_onset_range(self.reward_window):
-                reward = float(self.score_dist_threshold) - abs_err
-                reward /= self.score_dist_threshold
-
-        # punish negative pixel speed
-        if self.continuous:
-            reward += np.clip(self.rl_pool.sheet_speed, -np.inf, 0)
+        reward = self.reward.get_reward(abs_err)
 
         # end of score following
         done = False
         if target_lost or end_of_song:
             done = True
-            if self.render_mode:
+            if self.render_mode == 'computer' or self.render_mode == 'human':
                 self.audioThread.end_stream()
 
         # no reward if target is lost
         if target_lost:
-            reward = 0.0
+            reward = np.float32(0.0)
 
         # check if env is still used even if done
         if not done:
@@ -185,131 +178,123 @@ class ScoreFollowingEnv(Env):
         self.curr_frame = 0
         self.prev_frame = -1
 
+        self.last_action = None
+
         # reset data pool
         self.rl_pool.reset()
-        self.path_to_audio = self.rl_pool.get_current_audio_file()
 
         # reset audio thread
-        if self.render_mode:
+        if self.render_mode == 'computer' or self.render_mode == 'human':
+            # write midi to wav
+            import soundfile as sf
+            fn_audio = self.rl_pool.get_current_song_name()[0] + '.wav'
+            perf_audio, fs = self.rl_pool.get_current_perf_audio_file()
+            sf.write(fn_audio, perf_audio, fs)
+
+            self.path_to_audio = fn_audio
             self.audioThread = AudioThread(self.path_to_audio, self.rl_pool.spectrogram_params['fps'])
             self.audioThread.start()
             self.curr_frame = self.audioThread.get_current_spec_position()
 
         # get first observation
-        self.rl_pool.step(self.curr_frame)
-        self.spectrogram, self.sheet_img = self.rl_pool.observe()
+        self.performance, self.score = self.rl_pool.step(self.curr_frame)
 
-        self.spectrogram = np.expand_dims(self.spectrogram, 0)
-        self.sheet_img = np.expand_dims(self.sheet_img, 0)
-
-        self.state = self.spectrogram, self.sheet_img
+        self.state = dict(
+            perf=self.performance,
+            score=self.score
+        )
 
         return self.state
 
     def render(self, mode='computer', close=False):
 
         if close:
-            # TODO Is there anything we have to close?
             return
 
-        # resize factor
-        resz_spec = 4
-        resz_imag = float(resz_spec) / 2 * float(self.spectrogram[0].shape[0]) / self.sheet_img[0].shape[0]
+        perf = self.prepare_perf_for_render()
 
-        # prepare image
-        w, h = int(self.sheet_img[0].shape[1] * resz_imag), int(self.sheet_img[0].shape[0] * resz_imag)
-        sheet_rgb = cv2.resize(self.sheet_img[0], (w, h))
-        sheet_rgb = cv2.cvtColor(sheet_rgb, cv2.COLOR_GRAY2BGR)
-        sheet_rgb = sheet_rgb.astype(np.uint8)
+        score = self.prepare_score_for_render()
 
         # highlight image center
-        sheet_center = sheet_rgb.shape[1] // 2
-        cv2.line(sheet_rgb, (sheet_center, 25), (sheet_center, sheet_rgb.shape[0] - 25), (255, 0, 255), 3)
+        score_center = score.shape[1] // 2
+        cv2.line(score, (score_center, 25), (score_center, score.shape[0] - 25), AGENT_COLOR, 2)
 
         font_face = cv2.FONT_HERSHEY_SIMPLEX
         text_size = cv2.getTextSize("Agent", fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.6, thickness=1)[0]
-        text_org = (sheet_center - text_size[0] // 2, sheet_rgb.shape[0] - 7)
-        cv2.putText(sheet_rgb, "Agent", text_org, fontFace=font_face, fontScale=0.6, color=(255, 0, 255), thickness=2)
+        text_org = (score_center - text_size[0] // 2, score.shape[0] - 7)
+        cv2.putText(score, "Agent", text_org, fontFace=font_face, fontScale=0.6, color=AGENT_COLOR, thickness=2)
 
         # hide tracking lines if it is rendered for humans
         if self.metadata['render.modes']['human'] != mode:
-
             # visualize tracker position (true position within the score)
-            true_position = int(sheet_center - (resz_imag * self.rl_pool.tracking_error()))
+            true_position = int(score_center - (self.resz_x * self.rl_pool.tracking_error()))
 
             font_face = cv2.FONT_HERSHEY_SIMPLEX
             text_size = cv2.getTextSize("Target", fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.6, thickness=1)[0]
             text_org = (true_position - text_size[0] // 2, text_size[1] + 1)
-            cv2.putText(sheet_rgb, "Target", text_org, fontFace=font_face, fontScale=0.6, color=(255, 0, 0), thickness=2)
+            cv2.putText(score, "Target", text_org, fontFace=font_face, fontScale=0.6, color=TARGET_COLOR, thickness=2)
 
-            cv2.line(sheet_rgb, (true_position, 25), (true_position, sheet_rgb.shape[0] - 25), (255, 0, 0), 3)
+            cv2.line(score, (true_position, 25), (true_position, score.shape[0] - 25), TARGET_COLOR, 3)
 
             # visualize boundaries
-            l_boundary = int(sheet_center - self.score_dist_threshold * resz_imag)
-            r_boundary = int(sheet_center + self.score_dist_threshold * resz_imag)
-            cv2.line(sheet_rgb, (l_boundary, 0), (l_boundary, sheet_rgb.shape[0] - 1), (0, 0, 255), 1)
-            cv2.line(sheet_rgb, (r_boundary, 0), (r_boundary, sheet_rgb.shape[0] - 1), (0, 0, 255), 1)
-
-        # prepare spectrogram
-        spec = self.spectrogram[0][::-1, :]
-
-        spec = cv2.resize(spec, (self.spectrogram[0].shape[1] * resz_spec, self.spectrogram[0].shape[0] * resz_spec))
-        spec = plt.cm.viridis(spec)[:, :, 0:3]
-        spec = (spec * 255).astype(np.uint8)
-        spec_rgb = cv2.cvtColor(spec, cv2.COLOR_RGB2BGR)
-
-        # TODO This line showed the position within the spectrogram which was no changed to rightmost, so the line would be on the border
-        # cv2.line(img=spec_rgb,
-        #          pt1=(int(resz_spec * self.rl_pool.spec_offset), 0),
-        #          pt2=(int(resz_spec * self.rl_pool.spec_offset), spec_rgb.shape[0]),
-        #          color=(0, 0, 255), thickness=1)
+            l_boundary = int(score_center - self.score_dist_threshold * self.resz_x)
+            r_boundary = int(score_center + self.score_dist_threshold * self.resz_x)
+            cv2.line(score, (l_boundary, 0), (l_boundary, score.shape[0] - 1), BORDER_COLOR, 1)
+            cv2.line(score, (r_boundary, 0), (r_boundary, score.shape[0] - 1), BORDER_COLOR, 1)
 
         # prepare observation visualization
-        cols = sheet_rgb.shape[1]
-        rows = sheet_rgb.shape[0] + spec_rgb.shape[0]
+        cols = score.shape[1]
+        rows = score.shape[0] + perf.shape[0]
         obs_image = np.zeros((rows, cols, 3), dtype=np.uint8)
 
         # write sheet to observation image
-        obs_image[0:sheet_rgb.shape[0], 0:sheet_rgb.shape[1], :] = sheet_rgb
+        obs_image[0:score.shape[0], 0:score.shape[1], :] = score
 
         # write spec to observation image
-        c0 = obs_image.shape[1] // 2 - spec_rgb.shape[1] // 2
-        c1 = c0 + spec_rgb.shape[1]
-        obs_image[sheet_rgb.shape[0]:, c0:c1, :] = spec_rgb
+        c0 = obs_image.shape[1] // 2 - perf.shape[1] // 2
+        c1 = c0 + perf.shape[1]
+        obs_image[score.shape[0]:, c0:c1, :] = perf
 
-        # write current speed to observation image
-        font_face = cv2.FONT_HERSHEY_SIMPLEX
-        text = "pixel speed: " + str(self.rl_pool.sheet_speed)
-        text_size = cv2.getTextSize(text, fontFace=font_face, fontScale=0.6, thickness=1)[0]
-        text_org = ((obs_image.shape[1] - text_size[0] - 5), (sheet_rgb.shape[0] + text_size[1] + 3))
-        cv2.putText(obs_image, text, text_org, fontFace=font_face, fontScale=0.6, color=(255, 255, 255), thickness=1)
+        # draw black line to separate score and performance
+        obs_image[score.shape[0], c0:c1, :] = 0
 
-        # write reward to observation image
-        to_print = np.round(self.last_reward, 2)
-        text = "last reward: " + str(to_print)
-        text_size = cv2.getTextSize(text, fontFace=font_face, fontScale=0.6, thickness=1)[0]
-        text_org = ((obs_image.shape[1] - text_size[0] - 5), (sheet_rgb.shape[0] + 3 * text_size[1] + 3))
-        cv2.putText(obs_image, text, text_org, fontFace=font_face, fontScale=0.6, color=(255, 255, 255), thickness=1)
-
-        # write cumulative reward (score) to observation image
-        to_print = np.round(self.cum_reward, 2)
-        text = "score: " + str(to_print)
-        text_size = cv2.getTextSize(text, fontFace=font_face, fontScale=0.6, thickness=1)[0]
-        text_org = ((obs_image.shape[1] - text_size[0] - 5), (sheet_rgb.shape[0] + 5 * text_size[1] + 3))
-        cv2.putText(obs_image, text, text_org, fontFace=font_face, fontScale=0.6, color=(255, 255, 255), thickness=1)
+        # write text to the observation image
+        self._write_text(obs_image=obs_image, pos=self.text_position, color=TEXT_COLOR)
 
         # preserve this for access from outside
         self.obs_image = obs_image
 
-        # TODO think about proper render mode
-        if self.render_mode is not None:
-            cv2.imshow("Score Following", obs_image)
+        # show image
+        if self.render_mode == 'computer' or self.render_mode == 'human':
+            cv2.imshow("Score Following", self.obs_image)
             cv2.waitKey(1)
 
     def close(self):
-        # TODO implement
         pass
 
     def _seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
+
+    def _write_text(self, obs_image, pos, color):
+
+        # write reward to observation image
+        write_text('reward: {:6.2f}'.format(self.last_reward if self.last_reward is not None else 0),
+                   pos, obs_image, color=color)
+
+        # write cumulative reward (score) to observation image
+        write_text("score: {:6.2f}".format(self.cum_reward if self.cum_reward is not None else 0),
+                   pos + 2, obs_image, color=color)
+
+        # write last action
+        write_text("action: {:+6.1f}".format(self.last_action), pos + 4, obs_image, color=color)
+
+    def prepare_score_for_render(self):
+        return prepare_sheet_for_render(self.score, resz_x=self.resz_imag, resz_y=self.resz_imag)
+
+    def prepare_perf_for_render(self):
+        return prepare_spec_for_render(self.performance, resz_spec=self.resz_spec)
+
+
+
+
