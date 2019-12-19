@@ -1,7 +1,8 @@
+import copy
 
 import numpy as np
+
 from torch.optim.optimizer import Optimizer
-import copy
 
 
 class RefinementLRScheduler(object):
@@ -17,6 +18,7 @@ class RefinementLRScheduler(object):
 
         self.model = model
         self.best_model = None
+        self.stop_learning = False
 
         if not isinstance(optimizer, Optimizer):
             raise TypeError('{} is not an Optimizer'.format(
@@ -38,7 +40,7 @@ class RefinementLRScheduler(object):
             self.last_improvement = 0
             self.best_score = score
             if self.model is not None:
-                self.best_model = copy.deepcopy(self.model)
+                self.best_model = copy.deepcopy(self.model.net)
 
         print('Impatience Level {} of {}'.format(self.last_improvement, self.patience))
 
@@ -48,7 +50,9 @@ class RefinementLRScheduler(object):
 
             if self.model is not None:
                 print('Reset model')
-                self.model.net = copy.deepcopy(self.best_model.net)
+                # self.model.net = copy.deepcopy(self.best_model.net)
+                self.model.net.load_state_dict(self.best_model.state_dict())
+                self.model.model_params = self.model.net.parameters()
 
             # update lrs for all parameter groups
             if self.n_refinement_steps >= 0:
@@ -60,5 +64,7 @@ class RefinementLRScheduler(object):
                 print('No more refinement steps. Setting learning rate to 0')
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = 0.0
+                self.stop_learning = True
 
-
+    def learning_stopped(self):
+        return self.stop_learning
