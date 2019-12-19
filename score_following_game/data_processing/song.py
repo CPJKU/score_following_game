@@ -323,14 +323,14 @@ class RPWAudioSheetImgSong(SongBase):
         return data, fs
 
 
-def load_song(config: dict, cur_path_score, cur_path_perf, sound_fonts_dir, real_perf=False) -> SongBase:
+def load_song(config: dict, cur_path_score, cur_path_perf, real_perf=False) -> SongBase:
 
     cur_song_name = os.path.splitext(os.path.basename(os.path.normpath(cur_path_score)))[0]
 
     npzfile = np.load(cur_path_score, allow_pickle=True)
     score = (npzfile['sheet'], npzfile['coords'], npzfile['coord2onset'][0])
 
-    sound_font_default_path = os.path.join(sound_fonts_dir, config['default_sf'])
+    sound_font_default_path = config['default_sf']
 
     if real_perf == 'wav':
 

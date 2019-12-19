@@ -255,7 +255,7 @@ def get_shared_cache_pools(cache, config: dict, nr_pools=1, directory='test_samp
 
 
 def get_data_pools(config: dict, score_folder='score', perf_folder='performance', directory='test_sample',
-                   sound_fonts_dir=None, real_perf=None, n_worker=16) -> List[RLScoreFollowPool]:
+                   real_perf=None, n_worker=16) -> List[RLScoreFollowPool]:
     """Get a list of data pools with each data pool containing only a single song from the directory
 
     Parameters
@@ -268,8 +268,6 @@ def get_data_pools(config: dict, score_folder='score', perf_folder='performance'
         folder where the performance midis are located
     directory : str
         path to the directory containing the data that should be loaded
-    sound_fonts_dir : str
-        path to sound font file
     real_perf : [None | wav]
         indicates whether to use a real performance (in the form of a wav file) or not
     n_worker : int
@@ -293,7 +291,6 @@ def get_data_pools(config: dict, score_folder='score', perf_folder='performance'
             score_folder=score_folder,
             perf_folder=perf_folder,
             directory=directory,
-            sound_fonts_dir=sound_fonts_dir,
             real_perf=real_perf,
         )
         for score_path in score_paths
@@ -314,13 +311,12 @@ def get_single_song_pool(params) -> RLScoreFollowPool:
     score_folder = params.get('score_folder', 'score')
     perf_folder = params.get('perf_folder', 'performance')
     directory = params.get('directory', 'test_sample')
-    sound_fonts_dir = params.get('sound_fonts_dir', None)
     real_perf = params.get('real_perf', None)
 
     cur_path_score = os.path.join(directory, score_folder, song_name + ".npz")
     cur_path_perf = os.path.join(directory, perf_folder, song_name+'.mid')
 
-    song = load_song(config, cur_path_score, cur_path_perf, sound_fonts_dir, real_perf=real_perf)
+    song = load_song(config, cur_path_score, cur_path_perf, real_perf=real_perf)
 
     cache = SongCache(1)
     cache.append(song)

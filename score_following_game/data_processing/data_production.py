@@ -58,7 +58,7 @@ class SongCache(object):
 class SongProducer(Process):
 
     def __init__(self, cache, config: dict, score_folder='score', perf_folder='performance',
-                 directory='test_sample', sound_fonts_dir=None, real_perf=False):
+                 directory='test_sample', real_perf=False):
         Process.__init__(self)
 
         self.cache_size = cache.get_maxlen()
@@ -73,8 +73,7 @@ class SongProducer(Process):
         self.raw_data = load_data_from_dir(score_folder=self.score_folder, perf_folder=self.perf_folder,
                                            directory=self.directory, real_perf=real_perf)
 
-        self.sound_fonts_dir = sound_fonts_dir
-        self.default_sf_path = os.path.join(sound_fonts_dir, config['default_sf'])
+        self.default_sf_path = config['default_sf']
 
         self.real_perf = real_perf
 
@@ -115,8 +114,8 @@ def create_song_cache(cache_size=50):
 
 
 def create_song_producer(cache, config, score_folder='score', perf_folder='performance',
-                         directory='test_sample', sound_fonts_dir='sound_fonts', real_perf=False):
+                         directory='test_sample', real_perf=False):
 
     producer = SongProducer(cache, config=config, perf_folder=perf_folder, score_folder=score_folder,
-                            directory=directory, sound_fonts_dir=sound_fonts_dir, real_perf=real_perf)
+                            directory=directory, real_perf=real_perf)
     return producer

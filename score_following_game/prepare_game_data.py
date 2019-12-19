@@ -1,11 +1,9 @@
 
-from __future__ import print_function
-
 import os
 import sys
 import tarfile
 
-FILE_PATH = "http://www.cp.jku.at/people/dorfer/share/score_following_game_data.tar.gz"
+FILE_PATH = "http://www.cp.jku.at/resources/2019_RLScoFo_TISMIR/data.tar.gz"
 
 
 def download_file(source, destination):
@@ -39,7 +37,7 @@ if __name__ == '__main__':
     # add argument parser
     import argparse
     parser = argparse.ArgumentParser(description='Prepare score following game data.')
-    parser.add_argument('--destination_dir', help='path to data destination directory.', type=str, default=".")
+    parser.add_argument('--destination_dir', help='path to data destination directory.', type=str, default="data")
     args = parser.parse_args()
 
     # create destination directory

@@ -9,7 +9,7 @@ score_dim: [1, 2]
 perf_dim: [1, 2]
 aggregate: True
 
-default_sf: 'grand-piano-YDP-20160804.sf2'
+default_sf: 'sound_fonts/grand-piano-YDP-20160804.sf2'
 
 pitch_range: [0, 127]
 

@@ -1,5 +1,3 @@
-# ignore Nottingham files
-score_following/nottingham_test/
 
 .idea
 
@@ -7,6 +5,3 @@ score_following/nottingham_test/
 
 # ignore logs
 *.log
-
-# ignore python script for plotting the tempo curve
-plot_tempo_curve.py

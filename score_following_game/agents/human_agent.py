@@ -1,7 +1,7 @@
 from pynput import keyboard
+from score_following_game.agents.optimal_agent import OptimalAgent
 
 human_action = 1
-
 
 def on_press(key):
     global human_action
@@ -13,9 +13,10 @@ def on_press(key):
         human_action = 2
 
 
-class HumanAgent:
+class HumanAgent(OptimalAgent):
 
-    def __init__(self):
+    def __init__(self, rl_pool):
+        super(HumanAgent, self).__init__(rl_pool)
         keyboard.Listener(on_press=on_press).start()
 
     def select_action(self, state, train=False):

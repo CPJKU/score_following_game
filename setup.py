@@ -11,5 +11,5 @@ setup(
         "Programming Language :: Python :: 3",
         "Topic :: Scientific/Engineering :: ReinforcementLearning",
     ],
-    author='Matthias Dorfer',
+    author='Florian Henkel',
 )
