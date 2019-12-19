@@ -193,6 +193,7 @@ python test_agent.py --params <PARAM-ROOT>/<run_id>/best_model.pt --data_set <PA
 
 If everything works out fine this is what you should see
 (for an explanation of the components please see the youtube video above):
+
 ![data_example](sfg_screen_example.png)
 
 ### Computing the Numbers
