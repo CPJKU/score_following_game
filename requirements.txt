@@ -9,7 +9,7 @@ opencv_python==3.4.3.18
 PyAudio==0.2.11
 setuptools==39.2.0
 cloudpickle==0.5.3
-PyYAML==5.1.2
+PyYAML==5.4
 gym==0.15.4
 madmom==0.15.1
 tensorboard==2.0.2
