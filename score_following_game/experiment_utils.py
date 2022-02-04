@@ -1,11 +1,18 @@
 
-import os
-import sys
 import yaml
 
 import numpy as np
 
-from torch.utils.tensorboard import SummaryWriter
+from score_following_game.agents.a2c import A2CAgent
+from score_following_game.agents.ppo import PPOAgent
+from score_following_game.agents.reinforce import ReinforceAgent
+
+
+def load_game_config(config_file):
+    """Load game config from YAML file."""
+    with open(config_file, 'rb') as fp:
+        config = yaml.load(fp, Loader=yaml.FullLoader)
+    return config
 
 
 def setup_parser():
@@ -16,12 +23,11 @@ def setup_parser():
     # general parameters
     parser.add_argument('--train_set', help='path to train dataset.', type=str, default=None)
     parser.add_argument('--eval_set', help='path to evaluation dataset.', type=str, default=None)
-    parser.add_argument('--real_perf', help='Performances are real audio recordings.',
-                        choices=[None, 'wav'], type=str, default=None)
     parser.add_argument('--game_config', help='path to game config file.', type=str,
                         default='game_configs/midi_config.yaml')
     parser.add_argument('--use_cuda', help='if set use gpu instead of cpu.', action='store_true')
     parser.add_argument('--seed', help='random seed.', type=np.int, default=4711)
+    parser.add_argument('--split_data', help='split piece per page.', default=False, action='store_true')
 
     # agent parameters
     parser.add_argument('--agent', help='reinforcement learning algorithm [reinforce|a2c|ppo].',
@@ -42,11 +48,8 @@ def setup_parser():
                         type=np.int, default=4)
     parser.add_argument('--batch_size', help='batch size for surrogate objective optimization',
                         type=np.int, default=32)
-    parser.add_argument('--clip_value', help='clip value loss.', default=False, action='store_true')
 
-    parser.add_argument('--optim', help='optimizer.', type=str, default="Adam")
-    parser.add_argument('--optim_params', help='optimizer parameters.', type=yaml.load,
-                        default="{lr: 1e-4, betas: '(0.9, 0.999)'}")
+    parser.add_argument('--lr', help='learning rate', type=np.float, default=1e-4)
     parser.add_argument('--max_grad_norm', help='maximum length of gradient vectors.', type=np.float, default=0.5)
 
     parser.add_argument('--max_updates', help='maximum number of update steps.', type=np.int, default=np.int(1e9))
@@ -67,7 +70,7 @@ def setup_parser():
     parser.add_argument('--no_log', help='no tensorboard log.', action='store_true')
     parser.add_argument('--log_root', help='tensorboard log directory.', type=str, default="runs")
     parser.add_argument('--log_interval', help='log train progress after every k updates.', type=np.int, default=100)
-    parser.add_argument('--param_root', help='dump network parameters to this folder.', type=str, default="params")
+    parser.add_argument('--dump_root', help='dump network parameters to this folder.', type=str, default="params")
     parser.add_argument('--dump_interval', help='dump model parameters after every k updates.', type=np.int,
                         default=np.int(100000))
     parser.add_argument('--log_gradients', help='log gradients.', default=False, action='store_true')
@@ -85,89 +88,60 @@ def setup_evaluation_parser():
     parser.add_argument('--net', help='network architecture to optimize.', type=str, default=None)
     parser.add_argument('--params', help='path to parameter dump.', type=str, default=None)
     parser.add_argument('--piece', help='select song for testing.', type=str, default=None)
-    parser.add_argument('--real_perf', help='Performances are real audio recordings.',
-                        choices=[None, 'wav'], type=str, default=None)
     parser.add_argument('--trials', help='number of trials to run.', type=int, default=1)
     parser.add_argument('--eval_embedding', help='evaluate the learned embeddings.', default=False, action='store_true')
+    parser.add_argument('--split_data', help='split piece per page.', default=False, action='store_true')
+    parser.add_argument('--seed', help='random seed.', type=np.int, default=4711)
     return parser
 
 
 def setup_agent(args):
-    from score_following_game.reinforcement_learning.algorithms.agent import get_agent
 
     params = {
-        'observation_space': args.env.observation_space.spaces,
         'model': args.model,
         'gamma': args.discounting,
-        'use_cuda': args.use_cuda,
-        'log_writer': args.log_writer, 'log_interval': args.log_interval,
-        'evaluator': args.evaluator, 'eval_interval': args.eval_interval,
-        'lr_scheduler': args.lr_scheduler, 'score_name': args.eval_score_name, 'high_is_better': not args.low_is_better,
-        'dump_interval': args.dump_interval, 'dump_dir': args.dump_dir,
-        'n_actions': args.n_actions,
+        'logger': args.logger,
+        'evaluator': args.evaluator,
+        'lr_scheduler': args.lr_scheduler,
     }
 
-    if hasattr(args, 'distribution'):
-        params['distribution'] = args.distribution
-
-    if args.agent == 'reinforce':
+    if args.model == 'reinforce':
         params['batch_size'] = args.batch_size
+        agent_type = ReinforceAgent
 
-    elif args.agent == 'a2c':
+    elif args.model == 'a2c':
+        params['observation_space'] = args.env.observation_space.spaces
         params['n_worker'] = args.n_worker
         params['t_max'] = args.t_max
         params['gae_lambda'] = args.gae_lambda
         params['gae'] = args.gae
+        agent_type = A2CAgent
 
-    elif args.agent == 'ppo':
+    elif args.model == 'ppo':
+        params['observation_space'] = args.env.observation_space.spaces
         params['n_worker'] = args.n_worker
         params['t_max'] = args.t_max
         params['gae_lambda'] = args.gae_lambda
         params['ppo_epoch'] = args.ppo_epochs
         params['epsilon'] = args.ppo_epsilon
         params['batch_size'] = args.batch_size
-        params['clip_value'] = args.clip_value
+        agent_type = PPOAgent
+    else:
+        raise NotImplementedError('Invalid Algorithm')
 
-    return get_agent(args.agent, **params)
-
-
-def setup_logger(args):
-
-    if not os.path.exists(args.log_dir):
-        os.makedirs(args.log_dir)
-    log_writer = SummaryWriter(log_dir=args.log_dir)
-
-    log_writer.log_gradients = args.log_gradients
-
-    # log run settings
-    text = ""
-    arguments = np.sort([arg for arg in vars(args)])
-    for arg in arguments:
-        text += "**{}:** {}<br>".format(arg, getattr(args, arg))
-
-    log_writer.add_text("run_config", text)
-    log_writer.add_text("cmd", " ".join(sys.argv))
-
-    return log_writer
+    return agent_type(**params)
 
 
-def initialize_trained_agent(model, use_cuda=True, deterministic=False, distribution=None):
-    from score_following_game.reinforcement_learning.algorithms.agent import TrainedAgent
-    from score_following_game.reinforcement_learning.torch_extentions.distributions.adapted_categorical import AdaptedCategorical
-
-    if distribution is None:
-        distribution = AdaptedCategorical
-
-    return TrainedAgent(model, use_cuda=use_cuda, deterministic=deterministic, distribution=distribution)
-
-
-def make_env_tismir(rl_pool, config, render_mode=None):
+def make_env_tismir(rl_pool, config, seed, rank=0, render_mode=None):
     from score_following_game.environment.score_following_env import ScoreFollowingEnv
     from score_following_game.environment.env_wrappers import ConvertToFloatWrapper, ResizeSizeWrapper, InvertWrapper, \
         DifferenceWrapper
 
     # initialize environment
     env = ScoreFollowingEnv(rl_pool, config, render_mode=render_mode)
+    env.seed(seed + rank)
+    env.action_space.seed(seed + rank)
+
     env = ResizeSizeWrapper(env, key='score', factor=config['score_factor'], dim=config['score_dim'])
     env = ResizeSizeWrapper(env, key='perf', factor=config['perf_factor'], dim=config['perf_dim'])
     env = ConvertToFloatWrapper(env, key='score')
@@ -181,8 +155,8 @@ def make_env_tismir(rl_pool, config, render_mode=None):
     return env
 
 
-def get_make_env(rl_pool, config, make_env_fnc, render_mode=None):
+def get_make_env(rl_pool, config, make_env_fnc, seed, rank=0, render_mode=None):
     def _thunk():
-        return make_env_fnc(rl_pool, config, render_mode=render_mode)
+        return make_env_fnc(rl_pool, config, seed=seed, rank=rank, render_mode=render_mode)
 
     return _thunk

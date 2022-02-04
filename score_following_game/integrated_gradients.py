@@ -32,32 +32,14 @@ class IntegratedGradients:
 
         # Put model in evaluation mode
         self.model.eval()
-        self.hook_layers()
-
-    def store_score_grads(self, module, grad_in, grad_out):
-        self.score_grads = grad_in[0]
-
-    def store_perf_grads(self, module, grad_in, grad_out):
-        self.perf_grads = grad_in[0]
-
-    def hook_layers(self):
-
-        # Register hook to the first score/perf layer
-        first_score_layer = self.model._modules.get('sheet_conv1')
-        first_score_layer.register_backward_hook(self.store_score_grads)
-
-        first_perf_layer = self.model._modules.get('spec_conv1')
-        first_perf_layer.register_backward_hook(self.store_perf_grads)
 
     def get_scaled(self, inp, baseline):
         return [baseline + ((float(i)/self.steps)*(inp-baseline)) for i in range(0, self.steps+1)]
 
+    def generate_gradients(self, observation):
 
-    def generate_gradients(self, input_image, target_class=None):
-        # Forward pass
-
-        perf, perf_diff = input_image[0][0]
-        score, score_diff = input_image[1][0]
+        perf, perf_diff = observation['perf'][0]
+        score, score_diff = observation['score'][0]
 
         perf_baseline = 0*perf.detach()
         perf_diff_baseline = 0*perf_diff.detach()
@@ -67,7 +49,7 @@ class IntegratedGradients:
         p = torch.cat((perf.unsqueeze(0), perf_diff.unsqueeze(0)), dim=0).unsqueeze(0)
         s = torch.cat((score.unsqueeze(0), score_diff.unsqueeze(0)), dim=0).unsqueeze(0)
 
-        m_out = F.softmax(self.model(perf=p, score=s)['policy']['logits'], dim=-1)
+        m_out = F.softmax(self.model(perf=p, score=s)['policy'], dim=-1)
         target_class = np.ones((m_out.size()[0], 1)) * torch.argmax(m_out).item()
 
         scaled_perf = self.get_scaled(perf, perf_baseline)
@@ -89,7 +71,7 @@ class IntegratedGradients:
 
         p_batch.requires_grad_()
         s_batch.requires_grad_()
-        model_output = F.softmax(self.model(perf=p_batch, score=s_batch)['policy']['logits'], dim=-1)
+        model_output = F.softmax(self.model(perf=p_batch, score=s_batch)['policy'], dim=-1)
 
         # Zero gradients
         self.model.zero_grad()
@@ -100,9 +82,8 @@ class IntegratedGradients:
         # Backward pass
         model_output.backward(gradient=out.data)
 
-        score_grads = self.score_grads.cpu().data.numpy()
-        perf_grads = self.perf_grads.cpu().data.numpy()
-
+        score_grads = s_batch.grad.cpu().data.numpy()
+        perf_grads = p_batch.grad.cpu().data.numpy()
 
         score_g = (score.cpu().data.numpy() - score_baseline.cpu().data.numpy())*np.average(score_grads[:-1, 0], axis=0)
         score_diff_g = (score_diff.cpu().data.numpy() - score_diff_baseline.cpu().data.numpy())*np.average(score_grads[:-1, 1], axis=0)

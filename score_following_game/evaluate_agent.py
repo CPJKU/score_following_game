@@ -3,22 +3,22 @@ import os
 import pickle
 import torch
 
-from score_following_game.agents.networks_utils import get_network
-from score_following_game.data_processing.data_pools import get_data_pools
-from score_following_game.data_processing.utils import load_game_config
-from score_following_game.evaluation.evaluation import EmbeddingEvaluator, PerformanceEvaluator, print_formatted_stats
-from score_following_game.experiment_utils import initialize_trained_agent, setup_evaluation_parser, make_env_tismir
-from score_following_game.reinforcement_learning.algorithms.models import Model
+from score_following_game.agents.networks import get_network
+from score_following_game.data_processing.song import get_data_pools
 
-# render mode for the environment ('human', 'computer')
-render_mode = 'computer'
+from score_following_game.evaluation.evaluation import EmbeddingEvaluator, PerformanceEvaluator, print_formatted_stats
+from score_following_game.experiment_utils import setup_evaluation_parser, make_env_tismir, load_game_config
+from score_following_game.agents.models import Model
+
+
 
 if __name__ == "__main__":
     """ main """
 
     parser = setup_evaluation_parser()
-
     args = parser.parse_args()
+
+    torch.backends.cudnn.benchmark = True
 
     # parse parameter string
     exp_name = os.path.basename(os.path.split(args.params)[0])
@@ -31,13 +31,10 @@ if __name__ == "__main__":
     # load game config
     config = load_game_config(args.game_config)
 
-    # set agent type ('human', 'optimal') optimal currently not supported
-    agent_type = render_mode
-
     # compile network architecture
     n_actions = len(config["actions"])
-    net = get_network('networks_sheet_spec', args.net, n_actions=n_actions,
-                      shapes=dict(perf_shape=config['spec_shape'], score_shape=config['sheet_shape']))
+    net = get_network(args.net, n_actions=n_actions, shapes=dict(perf_shape=config['spec_shape'],
+                                                                 score_shape=config['sheet_shape']))
 
     # load network parameters
     net.load_state_dict(torch.load(args.params, map_location=lambda storage, loc: storage))
@@ -45,35 +42,34 @@ if __name__ == "__main__":
     # set model to evaluation mode
     net.eval()
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # create agent
-    use_cuda = torch.cuda.is_available()
-
-    model = Model(net, optimizer=None)
-
-    agent = initialize_trained_agent(model, use_cuda=use_cuda, deterministic=False)
+    agent = Model(net, optimizer=None, device=device)
+    agent.to(device)
 
     # initialize evaluation pools
-    evaluation_pools = get_data_pools(config, directory=args.data_set, real_perf=args.real_perf)
+    evaluation_pools = get_data_pools(config, directory=args.data_set, split=args.split_data)
 
     # set verbosity level
     verbose = args.trials == 1
 
     if args.eval_embedding:
-        evaluator = EmbeddingEvaluator(make_env_tismir, evaluation_pools, config, render_mode=None)
+        evaluator = EmbeddingEvaluator(make_env_tismir, evaluation_pools, config, seed=args.seed, logger=None, eval_interval=1)
 
         # evaluate on all pieces
-        res = evaluator.evaluate(agent, log_writer=None, log_step=0, verbose=verbose)
+        res = evaluator.evaluate(agent, step=1, verbose=verbose)
         with open('eval_elu.pickle', 'wb') as f:
             pickle.dump(res, f)
 
     else:
-        evaluator = PerformanceEvaluator(make_env_tismir, evaluation_pools, config, render_mode=None)
+        evaluator = PerformanceEvaluator(make_env_tismir, evaluation_pools, config, seed=args.seed, logger=None, eval_interval=1)
         printing = print_formatted_stats
 
         # evaluate on all pieces
         mean_stats = None
         for i_trial in range(args.trials):
-            stats = evaluator.evaluate(agent, log_writer=None, log_step=0, verbose=verbose)
+            stats, _ = evaluator.evaluate(agent, step=1, verbose=verbose)
             printing(stats)
 
             if mean_stats is None:

@@ -1,95 +1,73 @@
+import glob
+import itertools
+import os
+import tqdm
 
 import numpy as np
-import os
-import pretty_midi as pm
-import score_following_game.data_processing.utils as utils
 
+from collections import Counter
+from multiprocessing import get_context
+from multiprocessing.managers import BaseManager
 from scipy import interpolate
-from score_following_game.data_processing.utils import fluidsynth, merge_onsets, midi_to_onsets, midi_reset_instrument,\
-    midi_reset_start, pad_representation, wav_to_spec
+from score_following_game.data_processing.data_utils import wav_to_spec
+from typing import List
 
 
-class SongBase(object):
-    def __init__(self, score, perf, song_name: str, config: dict, sound_font_default_path: str):
-
-        self.config = config
+class AudioSheetImgSong:
+    def __init__(self, score, coords, onsets, perf, song_name: str, config: dict):
 
         # parse config
-        self.score_shape = config['score_shape']
-        self.perf_shape = config['perf_shape']
-        self.spec_representation = config['spec_representation']
+        self.score_excerpt_shape = tuple(config['score_shape'])
+        self.perf_excerpt_shape = tuple(config['perf_shape'])
         self.spectrogram_params = config['spectrogram_params']
 
         self.target_frame = config['target_frame']
 
-        self.aggregate = config.get('aggregate', True)
-
-        self.fps = self.spectrogram_params['fps']
         self.song_name = song_name
 
-        self.spec_processing = utils.midi_to_spec_otf
+        # prepare performance from recording
+        self.perf_path = perf
 
-        self.sound_font_default_path = sound_font_default_path
+        # start performance at first onset
+        min_onset = np.min(onsets)
+        onsets -= min_onset
+        spec = wav_to_spec(self.perf_path, self.spectrogram_params)[..., min_onset:]
 
-        self.sheet, self.coords, self.coords2onsets = score
+        # pad performance and onset
+        self.performance = np.pad(spec, ((0, 0), (0, 0), (self.perf_excerpt_shape[2], 0)), mode='constant',
+                                  constant_values=0)
+        self.perf_onsets = onsets + self.perf_excerpt_shape[2]
 
-        # pitch range
-        self.pitch_range = range(config['pitch_range'][0], config['pitch_range'][1])
+        # pad score white
+        self.score = np.pad(score, ((0, 0), (self.score_excerpt_shape[2], self.score_excerpt_shape[2])),
+                            mode='constant', constant_values=score.max())
+        self.coords = coords[:, 1] + self.score_excerpt_shape[2]
 
-        # save the original MIDI
-        self.org_perf_midi = perf
+        self.score = np.expand_dims(self.score, 0)
 
-        # variable for the current performance
-        self.cur_perf, self.perf_annotations = None, None
+        self.interpolation_fnc = interpolate.interp1d(self.perf_onsets, self.coords, bounds_error=False,
+                                                      fill_value=(self.coords[0], self.coords[-1]))
+        self.inverse_interpolation_fnc = interpolate.interp1d(self.coords, self.perf_onsets,
+                                                              # bounds_error=False, kind='nearest',
+                                                              bounds_error=False, kind='previous',
+                                                              fill_value=(self.perf_onsets[0], self.perf_onsets[-1]))
 
-        # variable for the current score
-        self.score = None
+    def get_perf_audio(self):
+        """use existing waveform."""
+        from scipy.io import wavfile
+        fs, data = wavfile.read(self.perf_path)
+        return data, fs
 
-    def prepare_perf_representation(self, midi: pm.PrettyMIDI, padding: int, sound_font_path=None) -> dict:
-        """Prepares a given midi for the later use inside of a data pool
-
-        Parameters
-        ----------
-        midi : pm.PrettyMIDI
-            the midi for which a representation should be created
-        padding : int
-            integer determining by how much the representation and onsets should be padded
-        sound_font_path : str
-            path to the sound font file
-
-        Returns
-        -------
-        representation_dict : dict,
-            'midi' -> pm.PrettyMidi, the midi file from the input
-            'representation' -> np.ndarray, either a piano roll or spectrogram representation of the midi
-            'representation_padded' -> the padded representation
-            'onsets' -> np.ndarray, list of onsets
-            'onsets_padded' -> the padded list of onsets
+    def get_true_score_position(self, perf_frame):
         """
+         Use the mapping between performance and score to interpolate the score position,
+         given the current performance position.
+        """
+        return self.interpolation_fnc(perf_frame)
 
-        # add an empty second instrument to midi if not already available
-        if len(midi.instruments) < 2:
-            midi.instruments.append(pm.Instrument(1))
-
-        onsets = midi_to_onsets(midi, self.fps, instrument_idx=None, unique=False)
-        onsets, self.coords = merge_onsets(onsets, self.coords, self.coords2onsets)
-
-        # extract spectrogram from synthesized audio
-        # representation = midi_to_spec_otf(midi, self.spectrogram_params, sound_font_path=sound_font_path)
-        representation = self.spec_processing(midi, self.spectrogram_params, sound_font_path=sound_font_path)
-
-        # pad representation at the beginning and end
-        representation_padded, onsets_padded = pad_representation(representation, onsets, padding)
-
-        representation_dict = {'midi': midi, 'representation': representation,
-                               'representation_padded': representation_padded,
-                               'onsets': onsets, 'onsets_padded': onsets_padded,
-                               'sound_font': sound_font_path}
-
-        return representation_dict
-
-    def get_representation_excerpts(self, perf_frame_idx_pad: int, est_score_position: int) -> (np.ndarray, np.ndarray):
-        """Get performance and score excerpts depending on the performance
+    def get_excerpts(self, perf_frame_idx_pad: int, est_score_position: int) -> (np.ndarray, np.ndarray):
+        """
+        Get performance and score excerpts depending on the performance
         frame index and the estimated score position
 
         Parameters
@@ -101,252 +79,266 @@ class SongBase(object):
 
         Returns
         -------
-        perf_representation_excerpt : np.ndarray
-            excerpt of the performance (either piano roll or spectrogram)
-        score_representation_excerpt : np.ndarray
-            excerpt of the score (currently only piano roll)
+        perf_excerpt : np.ndarray
+        score_excerpt : np.ndarray
         """
 
         # get performance excerpt
-        offset = self.score_shape[2] // 2
+        offset = self.score_excerpt_shape[2] // 2
         if self.target_frame == 'right_most':
-            perf_representation_excerpt = \
-                self.cur_perf['representation_padded'][..., (perf_frame_idx_pad - self.perf_shape[2]):perf_frame_idx_pad]
+            perf_excerpt = \
+                self.performance[..., (perf_frame_idx_pad - self.perf_excerpt_shape[2]):perf_frame_idx_pad]
         else:
-            perf_representation_excerpt = \
-                self.cur_perf['representation_padded'][..., (perf_frame_idx_pad - offset):(perf_frame_idx_pad + offset)]
+            perf_excerpt = \
+                self.performance[..., (perf_frame_idx_pad - offset):(perf_frame_idx_pad + offset)]
 
         # choose staff excerpt range
-        r0 = self.score['representation_padded'].shape[1]//2 - self.score_shape[1]//2
-        r1 = r0 + self.score_shape[1]
+        r0 = self.score.shape[1] // 2 - self.score_excerpt_shape[1] // 2
+        r1 = r0 + self.score_excerpt_shape[1]
 
-        c0 = int(est_score_position - self.score_shape[2]//2)
-        c1 = c0 + self.score_shape[2]
+        c0 = int(est_score_position - self.score_excerpt_shape[2] // 2)
+        c1 = c0 + self.score_excerpt_shape[2]
+
         # get score excerpt (centered around last onset)
-        # score_representation_excerpt = self.score['representation_padded'][:, r0:r1,
-        #                                int(est_score_position - offset + self.score_shape[2]):
-        #                                int(est_score_position + offset + self.score_shape[2])]
-        score_representation_excerpt = self.score['representation_padded'][:, r0:r1, c0:c1]
+        score_excerpt = self.score[:, r0:r1, c0:c1]
 
-        return perf_representation_excerpt, score_representation_excerpt
-
-    def get_perf_sf(self):
-        return self.cur_perf['sound_font']
-
-    def get_score_midi(self) -> pm.PrettyMIDI:
-        return self.score['midi']
-
-    def get_score_representation(self) -> np.ndarray:
-        return self.score['representation']
-
-    def get_score_representation_padded(self) -> np.ndarray:
-        return self.score['representation_padded']
-
-    def get_score_onsets(self) -> np.ndarray:
-        return self.score['onsets']
-
-    def get_perf_midi(self) -> pm.PrettyMIDI:
-        return self.cur_perf['midi']
-
-    def get_perf_audio(self, fs=44100):
-        """Renders the current performance using FluidSynth and returns the waveform."""
-        midi_synth = fluidsynth(self.cur_perf['midi'], fs=fs, sf2_path=self.cur_perf['sound_font'])
-
-        # let it start at the first onset position
-        midi_synth = midi_synth[int(self.cur_perf['onsets'][0] * fs / self.fps):]
-
-        return midi_synth, fs
-
-    def get_perf_representation(self) -> np.ndarray:
-        return self.cur_perf['representation']
-
-    def get_perf_representation_padded(self) -> np.ndarray:
-        return self.cur_perf['representation_padded']
-
-    def get_perf_onsets(self) -> np.ndarray:
-        return self.cur_perf['onsets']
-
-    def get_perf_onsets_padded(self) -> np.ndarray:
-        return self.cur_perf['onsets_padded']
-
-    def get_score_onsets_padded(self) -> np.ndarray:
-        return self.score['onsets_padded']
-
-    def get_num_of_perf_onsets(self) -> int:
-        return len(self.cur_perf['onsets'])
-
-    def get_num_of_score_onsets(self) -> int:
-        return len(self.score['onsets'])
-
-    def get_score_onset(self, idx) -> int:
-        return self.score['onsets'][idx]
-
-    def get_perf_onset(self, idx) -> int:
-        return self.cur_perf['onsets'][idx]
-
-    def get_true_score_position(self, perf_frame):
-        """Use the mapping between performance and score to interpolate the score position,
-           given the current performance position.
-
-        Parameters
-        ----------
-        perf_frame : int
-            Index of the performance frame.
-
-        Returns
-        -------
-        true_score_position : float
-            Interpolated position in the score.
-            We keep a floating point value for the sake of distance calculations.
-            However, in terms of frame idx, this does not make sense...
-        """
-        if perf_frame < self.cur_perf['onsets_padded'][0]:
-            # No score onset yet...stay at first score position
-            true_score_position = self.cur_perf['interpolation_fnc'](self.cur_perf['onsets_padded'][0])
-        elif perf_frame > self.cur_perf['onsets_padded'][-1]:
-            # Performance is over, stay with last onset
-            true_score_position = self.cur_perf['interpolation_fnc'](self.cur_perf['onsets_padded'][-1])
-        else:
-            try:
-                true_score_position = self.cur_perf['interpolation_fnc'](perf_frame)
-            except ValueError:
-                print(self.song_name, perf_frame)
-
-        return true_score_position
-
-    def get_song_name(self) -> str:
-        return self.song_name
-
-    def create_interpol_fnc(self, onsets_perf, onsets_score) -> interpolate.interp1d:
-        """Mapping from performance positions to positions in the score."""
-
-        interpol_fnc = None
-
+        # check if the excerpts have the desired shape
         try:
-            interpol_fnc = interpolate.interp1d(onsets_perf, onsets_score)
-        except ValueError as e:
-            print('There was a problem with song {}'.format(self.song_name))
-            print(onsets_perf.shape, onsets_score.shape)
-            print(onsets_perf)
-            print(onsets_score)
-            print(e)
-        return interpol_fnc
+            assert self.perf_excerpt_shape == perf_excerpt.shape and self.score_excerpt_shape == score_excerpt.shape
+        except AssertionError as e:
+            print('Encountered a shape mismatch.')
+            print('Song name: {}, perf_frame_idx_pad: {}, est_score_position: {}'.format(self.song_name,
+                                                                                         perf_frame_idx_pad,
+                                                                                         est_score_position))
+            print('Performance: desired shape = {}, actual shape= {}'.format(self.perf_excerpt_shape,
+                                                                             perf_excerpt.shape))
+            print('Score: desired shape = {}, actual shape= {}'.format(self.score_excerpt_shape,
+                                                                       score_excerpt.shape))
+            raise e
+
+        return perf_excerpt, score_excerpt
+
+    @property
+    def num_of_frames(self):
+        return self.performance.shape[-1]
+
+    @property
+    def last_onset(self):
+        return int(self.perf_onsets[-1])
+
+    @property
+    def first_onset(self):
+        return int(self.perf_onsets[0])
 
 
-class AudioSheetImgSong(SongBase):
+class SongPool:
 
-    def __init__(self, score, perf: pm.PrettyMIDI, song_name: str, config: dict, sound_font_default_path: str):
-        super(AudioSheetImgSong, self).__init__(score, perf, song_name, config, sound_font_default_path)
+    def __init__(self, songs):
+        self.songs = songs
+        self.length = len(songs)
 
-        self.cur_perf = self.prepare_perf_representation(self.org_perf_midi, padding=self.perf_shape[2],
-                                                         sound_font_path=self.sound_font_default_path)
+    def get_length(self):
+        return self.length
 
-        self.sheet_padded, self.coords_padded = pad_representation(self.sheet, self.coords[:, 1], self.score_shape[2],
-                                                                   pad_value=self.sheet.max())  # pad sheet white
-        self.sheet = np.expand_dims(self.sheet, 0)
-        self.sheet_padded = np.expand_dims(self.sheet_padded, 0)
-
-        self.cur_perf['interpolation_fnc'] = self.create_interpol_fnc(self.cur_perf['onsets_padded'], self.coords_padded)
-
-        self.score = {'representation': self.sheet, 'representation_padded': self.sheet_padded,
-                      'onsets': self.cur_perf['onsets'], 'onsets_padded': self.cur_perf['onsets_padded'],
-                      'coords': self.coords, 'coords_padded': self.coords_padded}
+    def get_song(self, item):
+        return self.songs[item]
 
 
-class RPWAudioSheetImgSong(SongBase):
+def create_shared_songs_pool(songs):
+    BaseManager.register('SongPool', SongPool)
+    manager = BaseManager()
+    manager.start()
+
+    return manager.SongPool(songs)
+
+
+def get_single_song_pool(params) -> List[SongPool]:
+
+    config = params['config']
+    song_name = params['song_name']
+    directory = params.get('directory', 'test_sample')
+    split = params['split']
+
+    cur_path_score = os.path.join(directory, song_name + ".npz")
+
+    songs = load_song({'score_path': cur_path_score,  'config': config, 'split': split})
+
+    pools = []
+    for song in songs:
+        pools.append(SongPool([song]))
+
+    return pools
+
+
+def get_data_pools(config: dict, split: bool = False, directory: str = 'test_sample') -> List[SongPool]:
+    """Get a list of data pools with each data pool containing only a single song from the directory
+
+    Parameters
+    ----------
+    config : dict
+        dictionary specifying the config for the data pool and songs
+    split : bool
+        flag indicating whether each page of a piece should be considered separately
+    directory : str
+        path to the directory containing the data that should be loaded
+
+    Returns
+    -------
+    pools : List[RLScoreFollowPool]
+        list of data pools
     """
-    Class representing
-    """
-    def __init__(self, score, perf, song_name: str, config: dict):
-        super(RPWAudioSheetImgSong, self).__init__(score, perf, song_name, config, sound_font_default_path='')
 
-        # prepare performance from recording
-        self.path_perf = perf
-        midi_perf = midi_reset_instrument(pm.PrettyMIDI(self.path_perf.replace('.wav', '.mid')), id=0)
-        midi_perf = midi_reset_start(midi_perf)
+    print('Load data pools...')
 
-        self.cur_perf = self.prepare_perf_representation(perf, padding=self.perf_shape[2], perf_midi=midi_perf)
+    # score_paths = list(glob.glob(os.path.join(directory, score_folder, '*.npz')))
+    score_paths = list(glob.glob(os.path.join(directory, '*.npz')))
 
-        self.sheet_padded, self.coords_padded = pad_representation(self.sheet, self.coords[:, 1], self.score_shape[2],
-                                                                   pad_value=self.sheet.max())  # pad sheet white
-        self.sheet = np.expand_dims(self.sheet, 0)
-        self.sheet_padded = np.expand_dims(self.sheet_padded, 0)
+    params = [
+        dict(
+            song_name=os.path.splitext(os.path.basename(os.path.normpath(score_path)))[0],
+            config=config,
+            split=split,
+            directory=directory,
+        )
+        for score_path in score_paths
+    ]
 
-        self.cur_perf['interpolation_fnc'] = self.create_interpol_fnc(self.cur_perf['onsets_padded'], self.coords_padded)
-
-        self.score = {'representation': self.sheet, 'representation_padded': self.sheet_padded,
-                      'onsets': self.cur_perf['onsets'], 'onsets_padded': self.cur_perf['onsets_padded'],
-                      'coords': self.coords, 'coords_padded': self.coords_padded}
-
-    def prepare_perf_representation(self, path_audio: str, padding: int, perf_midi: pm.PrettyMIDI) -> dict:
-        """Prepares a given audio recording for the use in the datapool
-
-        Parameters
-        ----------
-        path_audio : str
-            Path to the audio recording.
-        padding : int
-            integer determining by how much the representation and onsets should be padded
-        perf_midi : PrettyMIDI
-            performance MIDI file
-
-        Returns
-        -------
-        representation_dict : dict,
-            'representation' -> np.ndarray, either a piano roll or spectrogram representation of the midi
-            'representation_padded' -> the padded representation
-            'onsets' -> np.ndarray, list of onsets
-            'onsets_padded' -> the padded list of onsets
-        """
-
-        # load performance onsets from annotations
-        onsets = midi_to_onsets(perf_midi, self.fps, instrument_idx=None, unique=False)
-        onsets, self.coords = merge_onsets(onsets, self.coords, self.coords2onsets)
-
-        # extract spectrogram from synthesized audio
-        representation = wav_to_spec(path_audio, self.spectrogram_params)
-
-        # pad representation at the beginning and end
-        representation_padded, onsets_padded = pad_representation(representation, onsets, padding)
-
-        representation_dict = {'representation': representation,
-                               'representation_padded': representation_padded,
-                               'onsets': onsets,
-                               'onsets_padded': onsets_padded}
-
-        return representation_dict
-
-    def get_perf_audio(self, fs=44100):
-        """use existing waveform."""
-        from scipy.io import wavfile
-        fs, data = wavfile.read(self.path_perf)
-        return data, fs
+    with get_context("spawn").Pool(8) as pool:
+        data_pools = list(tqdm.tqdm(pool.imap(get_single_song_pool, params), total=len(params)))
+    data_pools = list(itertools.chain(*data_pools))
+    return data_pools
 
 
-def load_song(config: dict, cur_path_score, cur_path_perf, real_perf=False) -> SongBase:
+def load_song(params):
 
-    cur_song_name = os.path.splitext(os.path.basename(os.path.normpath(cur_path_score)))[0]
+    config = params['config']
+    score_path = params['score_path']
+    perf_path = score_path.replace("npz", "wav")
+    split = params['split']
 
-    npzfile = np.load(cur_path_score, allow_pickle=True)
-    score = (npzfile['sheet'], npzfile['coords'], npzfile['coord2onset'][0])
+    cur_song_name = os.path.splitext(os.path.basename(os.path.normpath(score_path)))[0]
 
-    sound_font_default_path = config['default_sf']
+    npzfile = np.load(score_path, allow_pickle=True)
+    scores = npzfile["sheets"]
+    coords, systems = list(npzfile["coords"]), list(npzfile['systems'])
 
-    if real_perf == 'wav':
+    songs = []
+    full_unrolled_score = []
+    full_unrolled_coords = []
+    full_onsets = []
 
-        cur_path_perf = cur_path_perf.replace('.mid', '.wav')
-        return RPWAudioSheetImgSong(score, cur_path_perf, cur_song_name, config)
+    for page in range(len(scores)):
 
-    else:
+        score = scores[page]
+        page_coords = list(filter(lambda x: x['page_nr'] == page, coords))
 
-        cur_midi_perf = midi_reset_instrument(pm.PrettyMIDI(cur_path_perf), id=0)
-        return AudioSheetImgSong(score, cur_midi_perf, cur_song_name, config,
-                                 sound_font_default_path=sound_font_default_path)
+        if len(page_coords) > 0:
+            unrolled_score, unrolled_coords, onsets = unroll_score(score, page_coords, systems, page)
+
+            if split:
+                song = AudioSheetImgSong(unrolled_score, unrolled_coords, onsets, perf_path,
+                                         cur_song_name+f"_page_{page}", config)
+                songs.append(song)
+            else:
+                full_unrolled_score.append(unrolled_score)
+                full_unrolled_coords.append(unrolled_coords)
+                full_onsets.append(onsets)
+
+    if not split:
+
+        unrolled_score = np.hstack(full_unrolled_score)
+        onsets = np.concatenate(full_onsets)
+
+        for page in range(1, len(full_unrolled_score)):
+            full_unrolled_coords[page][:, 1] += full_unrolled_score[page - 1].shape[-1]
+
+        unrolled_coords = np.concatenate(full_unrolled_coords)
+
+        song = AudioSheetImgSong(unrolled_score, unrolled_coords, onsets,
+                                 perf_path, cur_song_name, config)
+        songs.append(song)
+
+    return songs
 
 
-def create_song(config, song_name, score, perf, default_sf_path) -> SongBase:
+def unroll_score(page, coords, systems, page_nr):
 
-    perf = midi_reset_instrument(perf, id=0) if isinstance(perf, pm.PrettyMIDI) else perf
-    score = midi_reset_instrument(score, id=0) if isinstance(score, pm.PrettyMIDI) else score
+    unrolled_score = []
 
-    return AudioSheetImgSong(score, perf, song_name, config, sound_font_default_path=default_sf_path)
+    unrolled_coords = []
+    width_offset = 0
+    for system_idx, system in enumerate(systems):
+
+        if system['page_nr'] != page_nr:
+            continue
+        system_coords = list(filter(lambda x: x['system_idx'] == system_idx, coords))
+
+        x_from = max(int(system['x'] - system['w']//2), 0)
+        x_to = min(int(system['x'] + system['w']//2), page.shape[1])
+
+        y_from = max(int(system['y'] - 100), 0)
+        y_to = min(int(system['y'] + 100), page.shape[0])
+
+        for c in system_coords:
+            c['note_x'] += width_offset - x_from
+            unrolled_coords.append(c)
+
+        excerpt = page[y_from:y_to, x_from:x_to]
+        if excerpt.shape[0] != 200:
+            excerpt = np.pad(excerpt, (200-excerpt.shape[0], 0), constant_values=255)
+
+        unrolled_score.append(excerpt)
+
+        width_offset += unrolled_score[-1].shape[-1]
+
+    unrolled_score = np.hstack(unrolled_score)
+
+    onsets = []
+    for i in range(len(unrolled_coords)):
+        # onset time to frame
+        unrolled_coords[i]['onset'] = int(unrolled_coords[i]['onset'] * 20)
+        onsets.append(unrolled_coords[i]['onset'])
+
+    onsets = np.asarray(onsets, dtype=np.int)
+
+    onsets = np.unique(onsets)
+    coords_new = []
+    for onset in onsets:
+        onset_coords = list(filter(lambda x: x['onset'] == onset, unrolled_coords))
+
+        onset_coords_merged = {}
+        for entry in onset_coords:
+            for key in entry:
+                if key not in onset_coords_merged:
+                    onset_coords_merged[key] = []
+                onset_coords_merged[key].append(entry[key])
+
+        # get system, bar and page with most notes in it
+        system_idx = int(Counter(onset_coords_merged['system_idx']).most_common(1)[0][0])
+        note_x = np.mean(
+            np.asarray(onset_coords_merged['note_x'])[np.asarray(onset_coords_merged['system_idx']) == system_idx])
+        page_nr = int(Counter(onset_coords_merged['page_nr']).most_common(1)[0][0])
+
+        # set y to staff center
+        note_y = -1.0
+        if note_x > 0:
+            note_y = systems[system_idx]['y']
+        coords_new.append([note_y, note_x, page_nr])
+
+    coords_new = np.asarray(coords_new)
+
+    return unrolled_score, coords_new, onsets
+
+
+def load_songs(config, directory, split=False):
+
+    params = []
+
+    for score_path in glob.glob(os.path.join(directory, '*.npz')):
+        params.append({'score_path': score_path, 'config': config, 'split': split})
+
+    with get_context("fork").Pool(8) as pool:
+        songs = list(tqdm.tqdm(pool.imap(load_song, params), total=len(params)))
+
+    songs = list(itertools.chain(*songs))
+    return songs

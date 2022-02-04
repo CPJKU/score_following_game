@@ -31,7 +31,7 @@ class InvertWrapper(gym.ObservationWrapper):
 
     def observation(self, observation):
 
-        # unfold observation vector
+        # invert observation vector
         observation[self.key] = 1.0 - observation[self.key]
 
         return observation
@@ -115,14 +115,3 @@ class ResizeSizeWrapper(gym.ObservationWrapper):
         return observation
 
 
-class TanhActionWrapper(gym.ActionWrapper):
-
-    def __init__(self, env):
-        gym.ActionWrapper.__init__(self, env)
-
-    def action(self, action):
-        return action*128
-
-    def reverse_action(self, action):
-
-        return action/128

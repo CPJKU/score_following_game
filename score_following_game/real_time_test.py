@@ -6,11 +6,11 @@ import tqdm
 
 import numpy as np
 
-from score_following_game.agents.networks_utils import get_network
-from score_following_game.data_processing.data_pools import get_single_song_pool
-from score_following_game.data_processing.utils import load_game_config, spectrogram_processor
-from score_following_game.experiment_utils import initialize_trained_agent, make_env_tismir, setup_evaluation_parser
-from score_following_game.reinforcement_learning.algorithms.models import Model
+from score_following_game.agents.networks import get_network
+from score_following_game.data_processing.song import get_single_song_pool
+from score_following_game.data_processing.data_utils import spectrogram_processor
+from score_following_game.experiment_utils import make_env_tismir, setup_evaluation_parser, load_game_config
+from score_following_game.agents.models import Model
 
 
 if __name__ == "__main__":
@@ -28,16 +28,17 @@ if __name__ == "__main__":
 
     config = load_game_config(args.game_config)
 
-    pool = get_single_song_pool(dict(config=config, song_name=args.piece,
-                                     directory=args.data_set, real_perf=args.real_perf))
+    # pool = get_single_song_pool(dict(config=config, song_name=args.piece, directory=args.data_set, split=args.split_data))
+    pool = get_single_song_pool(
+        dict(config=config, song_name=args.piece, directory=args.data_set, split=args.split_data))[0]
 
     # initialize environment
-    env = make_env_tismir(pool, config, render_mode=None)
+    env = make_env_tismir(pool, config, render_mode=None, seed=args.seed)
 
     # compile network architecture
     n_actions = len(config["actions"])
-    net = get_network("networks_sheet_spec", args.net, n_actions=n_actions,
-                      shapes=dict(perf_shape=config['spec_shape'], score_shape=config['sheet_shape']))
+    net = get_network(args.net, n_actions=n_actions, shapes=dict(perf_shape=config['spec_shape'],
+                                                                 score_shape=config['sheet_shape']))
 
     # load network parameters
     net.load_state_dict(torch.load(args.params))
@@ -47,9 +48,10 @@ if __name__ == "__main__":
 
     # create agent
     use_cuda = torch.cuda.is_available()
-    model = Model(net, optimizer=None)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = Model(net, optimizer=None, device=device)
 
-    agent = initialize_trained_agent(model, use_cuda=use_cuda, deterministic=True)
+    model.to(device)
 
     times_per_step = []
 
@@ -67,7 +69,7 @@ if __name__ == "__main__":
             processor(np.random.randn(1102))
 
             # choose action
-            action = agent.select_action(observation)
+            action = model.select_action(observation)
 
             # perform step and observe
             observation, reward, done, info = env.step(action)

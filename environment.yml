@@ -5,28 +5,28 @@ channels:
   - defaults
 
 dependencies:
-  - python=3.6
-  - scipy==1.1.0
-  - tqdm==4.23.4
-  - numpy==1.14.3
-  - matplotlib==2.2.2
-  - seaborn==0.8.1
-  - setuptools==39.2.0
-  - cloudpickle==0.5.3
-  - PyYAML==5.1.2
-  - Cython==0.28.3
-  - pytorch=1.3.1
+  - python=3.8
+  - scipy
+  - tqdm
+  - numpy
+  - matplotlib
+  - setuptools
+  - cloudpickle
+  - PyYAML
+  - Cython
+  - pytorch
 
   - pip:
-    - madmom==0.15.1
-    - pynput==1.3.7
-    - tensorboard==2.0.2
-    - PyAudio==0.2.11
-    - opencv_python==3.4.3.18
-    - gym==0.15.4
-    - pretty-midi==0.2.8
-    - pysoundfile==0.9.0.post1
-    - pyfluidsynth==1.2.5
-    - nose==1.3.7
-    - mock==2.0.0
-    - librosa==0.6.3
+    - madmom==0.16.1
+    - pynput
+    - tensorboard
+    - PyAudio
+    - opencv_python
+    - gym
+    - pretty-midi
+    - pysoundfile
+    - pyfluidsynth
+    - nose
+    - mock
+    - librosa
+    - tensorflow

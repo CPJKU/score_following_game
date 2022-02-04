@@ -1,15 +1,25 @@
 # Score Following as a Multi-Modal Reinforcement Learning Problem
 
+**Work in progress. This version does not yet achieve the same performance as the code in the original branch.
+Readme is not up-to-date.**
+
+
+**This is a cleaned and restructured version of the code base used for the articles listed below.
+If you want to run the exact code used for each article, please checkout the respective branch.**
+
 This repository contains the corresponding code for our article:
 >[Henkel F.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/florian-henkel/), 
 >[Balke S.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/stefan-balke/),
->[Dorfer M.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/matthias-dorfer/), and [Widmer G.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/gerhard-widmer/)<br>
-"[Score Following as a Multi-Modal Reinforcement Learning Problem](http://doi.org/10.5334/tismir.31)".<br>
+>[Dorfer M.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/matthias-dorfer/),
+> and [Widmer G.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/gerhard-widmer/) <br>
+"[Score Following as a Multi-Modal Reinforcement Learning Problem](http://doi.org/10.5334/tismir.31)". <br>
 *Transactions of the International Society for Music Information Retrieval*, 2019
 
 which is an invited extension of the work presented in:
->[Dorfer M.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/matthias-dorfer/), [Henkel F.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/florian-henkel/), and [Widmer G.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/gerhard-widmer/)<br>
-"[Learning to Listen, Read, and Follow: Score Following as a Reinforcement Learning Game](https://arxiv.org/pdf/1807.06391.pdf)".<br>
+>[Dorfer M.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/matthias-dorfer/), 
+> [Henkel F.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/florian-henkel/), 
+> and [Widmer G.](https://www.jku.at/en/institute-of-computational-perception/about-us/people/gerhard-widmer/) <br>
+"[Learning to Listen, Read, and Follow: Score Following as a Reinforcement Learning Game](https://arxiv.org/pdf/1807.06391.pdf)". <br>
 *In Proceedings of the 19th International Society for Music Information Retrieval Conference*, 2018
 
 Score following is the process of tracking a
@@ -94,32 +104,18 @@ This is what we recommend, especially if you want to try out new ideas.
 Finally, you will also need the [*Baselines*](https://github.com/openai/baselines) package by OpenAI.
 Please follow their instructions and install the package within your environment.
 
-### Software Synthesizer - FluidSynth
-Make sure that you have [fluidsynth](http://www.fluidsynth.org/) available on your system.
-We will need it to synthesise the audios from MIDI.
-Synthesising the audios and computing spectrograms will take a while
-but it is done only once when training an agent for the first time.
 
 ### Check if the Score Following Game works
 Once you have installed all packages and downloaded the data
 everything should be ready to train the models.
 To check if the game works properly on your system you can run the following script and
-play the game on your own.
+an optimal agent will play the game. (This will create a video in the folder *videos*.)
 ```
-python test_agent.py --data_set ./data/test_sample --piece Anonymous__lesgraces__lesgraces --game_config game_configs/mutopia_lchs1.yaml --agent_type human 
+python test_agent.py --data_set ../data/test_sample --piece Anonymous__lesgraces__lesgraces_synth --game_config game_configs/mutopia_lchs1.yaml --agent_type optimal 
 ```
-With the key "right" you can increase the agents pixel progression speed,
-with "left" you can decrease it.
-Remember, the goal is to collect as much reward as possible.
 
 **Important**: If you are a MAC user you have to add your terminal application (e.g. iTerm)
 to the list of accessibility input devices (system control -> security & privacy -> accessibility).
-
-If you don't want to play on your own,
-you can also run an optimal agent. (This will create a video in the folder *videos*.)
-```
-python test_agent.py --data_set ./data/test_sample --piece Anonymous__lesgraces__lesgraces --game_config game_configs/mutopia_lchs1.yaml --agent_type optimal 
-```
 
 **Important**: This wont work on a server without a x-window system
 so ideally you check it on a desktop machine.
@@ -158,12 +154,12 @@ to learn more.
 
 ### Train PPO Agent on Nottingham (monophonic):
 ```
-python experiment.py --net ScoreFollowingNetNottinghamLS --train_set <PATH-TO-DATA-ROOT>/nottingham/nottingham_train --eval_set <PATH-TO-DATA-ROOT>/nottingham/nottingham_valid --game_config game_configs/nottingham_ls1.yaml --log_root <LOG-ROOT> --param_root <PARAM-ROOT> --agent ppo
+python experiment.py --net ScoreFollowingNetNottinghamLS --train_set <PATH-TO-DATA-ROOT>/nottingham/nottingham_train --eval_set <PATH-TO-DATA-ROOT>/nottingham/nottingham_valid --game_config game_configs/nottingham_ls1.yaml --log_root <LOG-ROOT> --dump_root <PARAM-ROOT> --agent ppo
 ```
 
 ### Train PPO Agent on MSMD (polyphonic):
 ```
-python experiment.py --net ScoreFollowingNetMSMDLCHSDeepDoLight --train_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_train --eval_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_valid --game_config game_configs/mutopia_lchs1.yaml --log_root <LOG-ROOT> --param_root <PARAM-ROOT> --agent ppo
+python experiment.py --net ScoreFollowingNetMSMDLCHSDeepDoLight --train_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_train --eval_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_valid --game_config game_configs/mutopia_lchs1.yaml --log_root <LOG-ROOT> --dump_root <PARAM-ROOT> --agent ppo
 ```
 
 ### Logging with [Tensorboard](https://github.com/tensorflow/tensorboard)
@@ -224,7 +220,7 @@ We assume here that the data is already set up as explained above.
 - optional: change the number of evaluation trails in the command below to 1 for a quick check. Run the full 10 evaluations to see how stable the model is.
 
 ```
-python evaluate_agent --trials 10 --params ./models/<PATH-TO-PRETRAINEDMODEL>/best_model.pt --data_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_test
+python evaluate_agent --trials 10 --params ../models/<PATH-TO-PRETRAINEDMODEL>/best_model.pt --data_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_test
 ```
 **Note**: If you keep the folder name as we provide it, the network and configuration file will be automatically derived. 
 For our best PPO agent you should get a similar output as the following (differences are due to the stochastic behavior of the RL agent):
@@ -247,6 +243,6 @@ The last row is the average over all 10 evaluation trials.
 If you want to see how the pre-trained model performs on a single piece run the following command (this will create a video in the *videos* folder):
 
 ```
-python test_agent.py --params ./models/<PATH-TO-PRETRAINEDMODEL>/best_model.pt --data_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_test --piece BachJS__BWV117a__BWV-117a --agent_type rl
+python test_agent.py --params ../models/<PATH-TO-PRETRAINEDMODEL>/best_model.pt --data_set <PATH-TO-DATA-ROOT>/msmd_all/msmd_all_test --piece BachJS__BWV117a__BWV-117a --agent_type rl
 ```
 

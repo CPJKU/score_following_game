@@ -1,8 +1,7 @@
 import cv2
-import numpy as np
 import os
 import shutil
-import soundfile as sf
+import numpy as np
 
 
 def write_video(images, fn_output='output.mp4', frame_rate=20, overwrite=False):
@@ -36,7 +35,7 @@ def mux_video_audio(path_video, path_audio, path_output='output_audio.mp4'):
     check_call(["ffmpeg", "-y", "-i", path_video, "-i", path_audio, "-shortest", path_output])
 
 
-def render_video(observation_images, pool, fps=20, mux_audio=True, real_perf=False, video_path='videos'):
+def render_video(observation_images, env, fps=20, mux_audio=True, video_path=os.path.join('..', 'videos')):
 
     if not os.path.isdir(video_path):
         os.mkdir(video_path)
@@ -44,21 +43,15 @@ def render_video(observation_images, pool, fps=20, mux_audio=True, real_perf=Fal
     if mux_audio:
         fn_audio = 'tmp.wav'
 
-        if real_perf == 'wav':
-            # copy over wav file
-            shutil.copy(pool.curr_song.path_perf, fn_audio)
-        else:
-            # get synthesized MIDI as WAV
-            perf_audio, fs = pool.get_current_perf_audio_file()
-            sf.write(fn_audio, perf_audio, fs)
+        shutil.copy(env.curr_song.perf_path, fn_audio)
 
         # frame rate video is now based on the piano roll's frame rate
-        path_video = write_video(observation_images, fn_output=pool.get_current_song_name() + '.mp4',
+        path_video = write_video(observation_images, fn_output=env.curr_song.song_name + '.mp4',
                                  frame_rate=fps, overwrite=True)
 
         # mux video and audio with ffmpeg
         mux_video_audio(path_video, fn_audio, path_output=os.path.join(video_path,
-                                                                       pool.get_current_song_name() + '_audio.mp4'))
+                                                                       env.curr_song.song_name + '_audio.mp4'))
 
         # clean up
         os.remove(fn_audio)

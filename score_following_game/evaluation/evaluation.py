@@ -63,20 +63,20 @@ def compute_alignment_stats(evaluation_data):
 
 class Evaluator:
 
-    def __init__(self, make_env, evaluation_pools, config, trials=1, render_mode=None):
+    def __init__(self, make_env, evaluation_pools, config, logger, seed, trials=1,
+                 render_mode=None, eval_interval=5000):
         self.make_env = make_env
         self.evaluation_pools = evaluation_pools
         self.config = config
         self.render_mode = render_mode
         self.trials = trials
+        self.eval_interval = eval_interval
+        self.logger = logger
+        self.seed = seed
 
     def _eval_pool(self, agent, pool, verbose):
-        pool.reset()
 
-        if verbose:
-            print(pool.get_current_song_name().ljust(60), end=" ")
-
-        env = self.make_env(pool, self.config, render_mode=self.render_mode)
+        env = self.make_env(pool, self.config, seed=self.seed, render_mode=self.render_mode)
 
         alignment_errors = []
 
@@ -84,89 +84,107 @@ class Evaluator:
         episode_reward = 0
         observation = env.reset()
 
-        onset_list = pool.get_current_song_onsets()
+        if verbose:
+            print(env.unwrapped.curr_song.song_name)
+
+        onset_list = env.unwrapped.curr_song.perf_onsets
         while True:
 
             # choose action
-            action = agent.select_action(observation, train=False)
+            action = agent.select_action(observation)
 
             # perform step and observe
             observation, reward, done, info = env.step(action)
             episode_reward += reward
 
             # keep alignment errors, only store tracking error if an onset occurs
-            if pool.curr_perf_frame in onset_list:
-                alignment_errors.append(pool.tracking_error())
+            if env.unwrapped.curr_frame in onset_list:
+                alignment_errors.append(env.unwrapped.tracking_error)
 
             if done:
                 break
 
         # compute number of tracked onsets
-        onsets_tracked = np.sum(onset_list <= pool.curr_perf_frame)
+        onsets_tracked = np.sum(onset_list <= env.unwrapped.curr_frame)
 
         song_data = {'alignment_errors': alignment_errors, 'onsets_tracked': onsets_tracked,
                      'total_onsets': len(onset_list)}
 
         return song_data
 
-    def evaluate(self, agent, log_writer=None, log_step=0, verbose=False):
+    # def evaluate(self, agent, log_writer, log_step=0, verbose=False):
+    def evaluate(self, agent, step=0, verbose=False):
         raise NotImplementedError
 
 
 class PerformanceEvaluator(Evaluator):
 
-    def __init__(self, make_env, evaluation_pools, config, trials=1, render_mode=None):
-        Evaluator.__init__(self, make_env, evaluation_pools, config, trials, render_mode)
+    def __init__(self, make_env, evaluation_pools, config, seed, logger=None, trials=1, render_mode=None,
+                 eval_interval=5000, score_name=None, high_is_better=False):
+        Evaluator.__init__(self, make_env, evaluation_pools, config, logger, seed, trials, render_mode, eval_interval)
 
-    def evaluate(self, agent, log_writer=None, log_step=0, verbose=False):
+        self.score_name = score_name
+        self.high_is_better = high_is_better
+        self.best_score = -np.inf if self.high_is_better else np.inf
 
+    def evaluate(self, agent, step=0, verbose=False):
         mean_stats = None
-        for _ in range(self.trials):
-            evaluation_data = []
-            for pool in self.evaluation_pools:
+        score = None
 
-                song_data = self._eval_pool(agent, pool, verbose)
-                evaluation_data.append(song_data)
+        if step % self.eval_interval == 0 and step > 0:
+            agent.set_eval_mode()
+            for _ in range(self.trials):
+                evaluation_data = []
+                for pool in self.evaluation_pools:
 
-                if verbose:
-                    song_stats = compute_alignment_stats([song_data])
-                    string = "tracking ratio: %.2f" % song_stats['global_tracking_ratio']
-                    if song_stats['global_tracking_ratio'] == 1.0:
-                        string += " +"
-                    print(string)
+                    song_data = self._eval_pool(agent, pool, verbose)
+                    evaluation_data.append(song_data)
 
-            # compute alignment stats
-            stats = compute_alignment_stats(evaluation_data)
+                    if verbose:
+                        song_stats = compute_alignment_stats([song_data])
+                        string = "tracking ratio: %.2f" % song_stats['global_tracking_ratio']
+                        if song_stats['global_tracking_ratio'] == 1.0:
+                            string += " +"
+                        print(string)
 
-            stats['evaluation_data'] = evaluation_data
+                # compute alignment stats
+                stats = compute_alignment_stats(evaluation_data)
 
-            if mean_stats is None:
-                mean_stats = dict()
-                for key in stats.keys():
-                    if key != "evaluation_data":
-                        mean_stats[key] = []
+                stats['evaluation_data'] = evaluation_data
+
+                if mean_stats is None:
+                    mean_stats = dict()
+                    for key in stats.keys():
+                        if key != "evaluation_data":
+                            mean_stats[key] = []
+
+                for key in mean_stats.keys():
+                    mean_stats[key].append(stats[key])
 
             for key in mean_stats.keys():
-                mean_stats[key].append(stats[key])
+                mean_stats[key] = np.mean(mean_stats[key])
 
-        for key in mean_stats.keys():
-            mean_stats[key] = np.mean(mean_stats[key])
+            if self.logger is not None:
+                self.logger.log_scalars(mean_stats, "eval", int(step / self.eval_interval))
 
-        if log_writer is not None:
-            log_writer.add_scalar('eval/alignment_errors_mean', mean_stats['alignment_errors_mean'], log_step)
-            log_writer.add_scalar('eval/alignment_errors_median', mean_stats['alignment_errors_median'], log_step)
-            log_writer.add_scalar('eval/alignment_errors_std', mean_stats['alignment_errors_std'], log_step)
+            if self.score_name is not None:
+                score = mean_stats[self.score_name]
 
-            log_writer.add_scalar('eval/tracking_ratios_mean', mean_stats['tracking_ratios_mean'], log_step)
-            log_writer.add_scalar('eval/global_tracking_ratio', mean_stats['global_tracking_ratio'], log_step)
-            log_writer.add_scalar('eval/tracked_until_end_ratio', mean_stats['tracked_until_end_ratio'], log_step)
+                improvement = (self.high_is_better and score >= self.best_score) or \
+                              (not self.high_is_better and score <= self.best_score)
 
-        return mean_stats
+                if improvement:
+                    self.best_score = score
+                    if self.logger is not None:
+                        self.logger.store_model(agent, "best_model")
+
+        return mean_stats, score
 
 
 class EmbeddingEvaluator(Evaluator):
-    def __init__(self, make_env, evaluation_pools, config, trials=1, render_mode=None):
-        Evaluator.__init__(self, make_env, evaluation_pools, config, trials, render_mode)
+    def __init__(self, make_env, evaluation_pools, config, seed, logger=None, trials=1, render_mode=None,
+                 eval_interval=5000):
+        Evaluator.__init__(self, make_env, evaluation_pools, config, logger, seed, trials, render_mode, eval_interval)
 
         self.embedding = None
 
@@ -180,19 +198,15 @@ class EmbeddingEvaluator(Evaluator):
     def _eval_pool(self, agent, pool, verbose):
 
         self.register_hook(agent.model.net)
-        pool.reset()
-
-        if verbose:
-            print(pool.get_current_song_name())
 
         env = self.make_env(pool, self.config, render_mode=self.render_mode)
 
-        plain_env = self.make_env(copy.deepcopy(pool), self.config, render_mode=self.render_mode)
-
-        while not hasattr(plain_env, 'rl_pool'):
-            plain_env = plain_env.env
+        plain_env = self.make_env(copy.deepcopy(pool), self.config, render_mode=self.render_mode).unwrapped
 
         plain_env.reset()
+
+        if verbose:
+            print(plain_env.curr_song.song_name)
 
         # get observations
         observation = env.reset()
@@ -205,8 +219,8 @@ class EmbeddingEvaluator(Evaluator):
                         'song_name': [],
                         'tracking_error': [],
                         'speed': []}
-        # song_onsets = plain_env.rl_pool.curr_song.get_perf_onsets()
-        song_onsets = plain_env.rl_pool.curr_song.cur_perf['onsets_padded']
+
+        song_onsets = plain_env.curr_song.perf_onsets
         while True:
 
             # choose action
@@ -215,8 +229,8 @@ class EmbeddingEvaluator(Evaluator):
             # perform step and observe
             observation, reward, done, info = env.step(action)
 
-            cur_perf_frame = plain_env.rl_pool.curr_perf_frame
-            in_len = plain_env.rl_pool.perf_shape[-1]
+            cur_perf_frame = plain_env.curr_frame
+            in_len = plain_env.perf_excerpt_shape[-1]
             onsets_in_input = len(list(filter(lambda o: cur_perf_frame-in_len <= o <= cur_perf_frame, song_onsets)))
 
             # perform a step in the plain env to get the original observation
@@ -227,19 +241,19 @@ class EmbeddingEvaluator(Evaluator):
             return_dicts['embedding'].append(self.embedding.cpu().data.numpy())
             return_dicts['onsets_in_state'].append(onsets_in_input)
             return_dicts['target_lost'].append(done)
-            return_dicts['song_name'].append(plain_env.rl_pool.curr_song.song_name)
-            return_dicts['tracking_error'].append(plain_env.rl_pool.tracking_error())
-            return_dicts['speed'].append(plain_env.rl_pool.sheet_speed)
+            return_dicts['song_name'].append(plain_env.curr_song.song_name)
+            return_dicts['tracking_error'].append(plain_env.tracking_error)
+            return_dicts['speed'].append(plain_env.sheet_speed)
 
             if done:
                 break
 
-        tue = np.sum(song_onsets <= plain_env.rl_pool.curr_perf_frame) == len(song_onsets)
+        tue = np.sum(song_onsets <= plain_env.curr_frame) == len(song_onsets)
         return_dicts['tue'] = [tue for _ in range(len(return_dicts['state']))]
 
         return return_dicts
 
-    def evaluate(self, agent, log_writer=None, log_step=0, verbose=False):
+    def evaluate(self, agent, step=0, verbose=False):
 
         return_dicts = {'state': [],
                         'value': [],

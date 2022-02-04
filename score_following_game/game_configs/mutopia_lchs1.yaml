@@ -1,17 +1,11 @@
 # data generation parameters
 perf_shape: [1, 78, 40]
 score_shape: [1, 160, 512]
-spec_representation: True
 spectrogram_params: {'sample_rate': 22050, 'frame_size': 2048, 'fps': 20}
 score_factor: 0.5
 perf_factor: 1.0
 score_dim: [1, 2]
 perf_dim: [1, 2]
-aggregate: True
-
-default_sf: 'sound_fonts/grand-piano-YDP-20160804.sf2'
-
-pitch_range: [0, 127]
 
 # network parameters
 spec_shape: [2, 78, 40]
@@ -20,6 +14,4 @@ sheet_shape: [2, 80, 256]
 # game parameters (environment)
 target_frame: right_most
 actions: [-1.0, 0, 1.0]
-reward_name: 'triangle_reward'
-reward_params: {'only_on_onset': False}
 
