@@ -111,7 +111,10 @@ class Agent(object):
             if type(self.log_dict[log_key]) == int:
                 print('| {:<15} {: 12d} |'.format(log_key, log_var))
             else:
-                print('| {:<15} {: 12.5f} |'.format(log_key, log_var))
+                if abs(log_var) < 1e-5:
+                    print('| {:<15} {: 12.0e} |'.format(log_key, log_var))
+                else:
+                    print('| {:<15} {: 12.5f} |'.format(log_key, log_var))
 
             if self.log_writer is not None:
                 self.log_writer.add_scalar('training/{}'.format(log_key), log_var,
