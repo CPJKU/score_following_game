@@ -39,7 +39,7 @@ def setup_parser():
                         action='store_true')
     parser.add_argument('--ppo_epsilon', help='clipping parameter for policy changes.', type=np.float, default=0.2)
     parser.add_argument('--ppo_epochs', help='number of epochs for surrogate objective optimization.',
-                        type=np.int, default=4)
+                        type=np.int, default=1)
     parser.add_argument('--batch_size', help='batch size for surrogate objective optimization',
                         type=np.int, default=32)
     parser.add_argument('--clip_value', help='clip value loss.', default=False, action='store_true')
