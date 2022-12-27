@@ -7,7 +7,7 @@ matplotlib==2.2.2
 seaborn==0.8.1
 opencv_python==3.4.3.18
 PyAudio==0.2.11
-setuptools==39.2.0
+setuptools==65.5.1
 cloudpickle==0.5.3
 PyYAML==5.4
 gym==0.15.4
